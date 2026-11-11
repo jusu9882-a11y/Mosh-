@@ -15,13 +15,14 @@ Mosh aims to combine readable, productive syntax with native-code performance am
 
 ## Project status
 
-Mosh is in its language-design and compiler-foundation stage. An initial provisional lexer and token-dump command have been added; they are not yet a stable language contract. Parsing, type checking, ownership checking, LLVM code generation, and the runtime are not implemented.
+Mosh is in its language-design and compiler-foundation stage. Initial provisional lexer and parser stages have been added, including an AST and token/AST inspection commands. They are not yet a stable language contract. Name resolution, type checking, ownership checking, LLVM code generation, and the runtime are not implemented.
 
 ## Repository layout
 
 - `docs/SPECIFICATION.md` — initial language specification and open design questions
 - `docs/LEXER.md` — provisional lexical rules and current lexer limits
-- `compiler/` — Rust compiler with an initial lexer and token-dump command
+- `docs/PARSER.md` — provisional grammar, AST scope, and parser limitations
+- `compiler/` — Rust compiler with initial lexer and parser development commands
 
 ## Development principles
 
