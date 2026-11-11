@@ -300,16 +300,18 @@ impl<'a> Lexer<'a> {
                 self.bump();
             }
             if !matches!(self.peek(), Some(b'0'..=b'9')) {
-                // Leave the malformed exponent visible as a lexical error.
-                let span = self.span_from(start);
-                self.position = exponent_start;
-                self.column -= self.position.saturating_sub(exponent_start);
-                self.tokens.push(Token {
-                    kind: if is_float { TokenKind::Float } else { TokenKind::Integer },
-                    lexeme: self.source[start.start..self.position].to_string(),
-                    span,
+                let error_span = Span {
+                    start: exponent_start,
+                    end: self.position,
+                    line: self.line,
+                    column: self.column.saturating_sub(self.position - exponent_start),
+                    end_line: self.line,
+                    end_column: self.column,
+                };
+                return Err(LexError {
+                    message: "numeric exponent requires at least one digit".into(),
+                    span: error_span,
                 });
-                return;
             }
             is_float = true;
             while matches!(self.peek(), Some(b'0'..=b'9')) {
