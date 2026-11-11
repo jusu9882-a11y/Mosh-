@@ -370,6 +370,26 @@ mod tests {
     }
 
     #[test]
+    fn parses_multiple_top_level_functions() {
+        let p = parsed(
+            "function first():\n    return\nfunction second():\n    return\n",
+        ).unwrap();
+        assert_eq!(p.statements.len(), 2);
+        assert!(matches!(&p.statements[0], Stmt::Function { name, .. } if name == "first"));
+        assert!(matches!(&p.statements[1], Stmt::Function { name, .. } if name == "second"));
+    }
+
+    #[test]
+    fn parses_indexing_and_unary_expressions() {
+        let p = parsed("let value = -items[0]\n").unwrap();
+        assert!(matches!(
+            &p.statements[0],
+            Stmt::Let { value: Some(Expr::Unary { operand, .. }), .. }
+                if matches!(operand.as_ref(), Expr::Index { .. })
+        ));
+    }
+
+    #[test]
     fn rejects_missing_indented_block() {
         let e = parsed("function main():\nreturn\n").unwrap_err();
         assert!(e.message.contains("indented block"));
