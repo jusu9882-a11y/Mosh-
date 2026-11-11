@@ -247,9 +247,15 @@ impl<'a> Parser<'a> {
     }
 
     fn statement_end(&mut self) -> Result<(), ParseError> {
-        if self.take(&TokenKind::Newline) || self.check(&TokenKind::Dedent) || self.check(&TokenKind::Eof) {
+        if self.take(&TokenKind::Newline)
+            || self.check(&TokenKind::Dedent)
+            || self.check(&TokenKind::Eof)
+            || self.previous().kind == TokenKind::Dedent
+        {
             Ok(())
-        } else { Err(self.error("expected end of statement")) }
+        } else {
+            Err(self.error("expected end of statement"))
+        }
     }
     fn at_statement_end(&self) -> bool {
         matches!(self.kind(), TokenKind::Newline | TokenKind::Dedent | TokenKind::Eof)
