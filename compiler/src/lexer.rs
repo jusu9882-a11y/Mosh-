@@ -148,7 +148,7 @@ impl<'a> Lexer<'a> {
                     }
                 }
                 Some(b'"') | Some(b'\'') => self.scan_string()?,
-                Some(b'0'..=b'9') => self.scan_number(),
+                Some(b'0'..=b'9') => self.scan_number()?,
                 Some(b'a'..=b'z' | b'A'..=b'Z' | b'_') => self.scan_identifier(),
                 Some(_) => self.scan_operator_or_punctuation()?,
                 None => break,
@@ -276,7 +276,7 @@ impl<'a> Lexer<'a> {
         self.push(kind, start);
     }
 
-    fn scan_number(&mut self) {
+    fn scan_number(&mut self) -> Result<(), LexError> {
         let start = self.point_span();
         while matches!(self.peek(), Some(b'0'..=b'9')) {
             self.bump();
@@ -322,6 +322,7 @@ impl<'a> Lexer<'a> {
             if is_float { TokenKind::Float } else { TokenKind::Integer },
             start,
         );
+        Ok(())
     }
 
     fn scan_string(&mut self) -> Result<(), LexError> {
