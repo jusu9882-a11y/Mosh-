@@ -435,30 +435,30 @@ impl<'a> Lexer<'a> {
     }
 
     fn consume_newline(&mut self) {
-        if self.peek() == Some(b'\r') {
-            self.bump();
-            if self.peek() == Some(b'\n') {
+        let start = self.point_span();
+        if self.peek() == Some(b'\\r') {
+            self.position += 1;
+            if self.peek() == Some(b'\\n') {
                 self.position += 1;
             }
-        } else if self.peek() == Some(b'\n') {
-            self.bump();
+        } else if self.peek() == Some(b'\\n') {
+            self.position += 1;
         }
         self.line += 1;
         self.column = 1;
         self.at_line_start = true;
         if self.tokens.last().is_some_and(|t| t.kind != TokenKind::Newline) {
-            let span = Span {
-                start: self.position,
-                end: self.position,
-                line: self.line - 1,
-                column: 1,
-                end_line: self.line,
-                end_column: 1,
-            };
             self.tokens.push(Token {
                 kind: TokenKind::Newline,
                 lexeme: String::new(),
-                span,
+                span: Span {
+                    start: start.start,
+                    end: self.position,
+                    line: start.line,
+                    column: start.column,
+                    end_line: self.line,
+                    end_column: 1,
+                },
             });
         }
     }
@@ -625,6 +625,21 @@ mod tests {
         let error = tokenize("let x = @").unwrap_err();
         assert_eq!(error.span.line, 1);
         assert_eq!(error.span.column, 9);
+    }
+
+    #[test]
+    fn reports_malformed_numeric_exponents() {
+        let error = tokenize("42e+").unwrap_err();
+        assert!(error.message.contains("exponent"));
+    }
+
+    #[test]
+    fn newline_span_points_to_the_actual_line_end() {
+        let tokens = tokenize("x = 1\\n").unwrap();
+        let newline = tokens.iter().find(|t| t.kind == TokenKind::Newline).unwrap();
+        assert_eq!(newline.span.line, 1);
+        assert_eq!(newline.span.column, 6);
+        assert_eq!(newline.span.end_line, 2);
     }
 
     #[test]
