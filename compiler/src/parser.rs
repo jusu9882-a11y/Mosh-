@@ -327,7 +327,7 @@ mod tests {
                 assert_eq!(name, "add");
                 assert_eq!(params.len(), 2);
                 assert_eq!(return_type.as_ref().unwrap().name, "Int");
-                assert!(matches!(body[0], Stmt::Return { .. }));
+                assert!(matches!(&body[0], Stmt::Return { .. }));
             }
             _ => panic!("expected function"),
         }
@@ -336,7 +336,7 @@ mod tests {
     #[test]
     fn parses_if_else_and_bindings() {
         let p = parsed("if true:\n    let x: Int = 1\nelse:\n    let x: Int = 2\n").unwrap();
-        assert!(matches!(p.statements[0], Stmt::If { else_body: Some(_), .. }));
+        assert!(matches!(&p.statements[0], Stmt::If { else_body: Some(_), .. }));
     }
 
     #[test]
@@ -344,7 +344,7 @@ mod tests {
         let p = parsed("let result = 1 + 2 * 3\n").unwrap();
         match &p.statements[0] {
             Stmt::Let { value: Some(Expr::Binary { right, .. }), .. } =>
-                assert!(matches!(**right, Expr::Binary { operator: crate::lexer::TokenKind::Star, .. })),
+                assert!(matches!(right.as_ref(), Expr::Binary { operator: crate::lexer::TokenKind::Star, .. })),
             _ => panic!("unexpected AST"),
         }
     }
@@ -358,15 +358,15 @@ mod tests {
     #[test]
     fn parses_mutable_and_inferred_bindings() {
         let p = parsed("mut count: Int = 0\nlet answer = 42\n").unwrap();
-        assert!(matches!(p.statements[0], Stmt::Let { mutable: true, .. }));
-        assert!(matches!(p.statements[1], Stmt::Let { ty: None, .. }));
+        assert!(matches!(&p.statements[0], Stmt::Let { mutable: true, .. }));
+        assert!(matches!(&p.statements[1], Stmt::Let { ty: None, .. }));
     }
 
     #[test]
     fn parses_loops() {
         let p = parsed("while true:\n    work()\nfor item in items:\n    print(item)\n").unwrap();
-        assert!(matches!(p.statements[0], Stmt::While { .. }));
-        assert!(matches!(p.statements[1], Stmt::For { .. }));
+        assert!(matches!(&p.statements[0], Stmt::While { .. }));
+        assert!(matches!(&p.statements[1], Stmt::For { .. }));
     }
 
     #[test]
