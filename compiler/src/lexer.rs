@@ -772,18 +772,18 @@ mod tests {
 
     #[test]
     fn preserves_unicode_string_lexemes_and_hash_characters() {
-        let tokens = tokenize("let text = \\"héllo # mosh\\" # trailing comment\\n").unwrap();
+        let tokens = tokenize("let text = \"héllo # mosh\" # trailing comment\n").unwrap();
         let string = tokens
             .iter()
             .find(|token| token.kind == TokenKind::String)
             .unwrap();
 
-        assert_eq!(string.lexeme, "\\"héllo # mosh\\"");
+        assert_eq!(string.lexeme, "\"héllo # mosh\"");
         assert_eq!(string.span.start, 11);
-        assert_eq!(string.span.end, 25);
+        assert_eq!(string.span.end, 26);
         assert_eq!(string.span.line, 1);
         assert_eq!(string.span.column, 12);
-        assert_eq!(string.span.end_column, 26);
+        assert_eq!(string.span.end_column, 27);
         assert_eq!(
             tokens.iter().filter(|token| token.kind == TokenKind::Newline).count(),
             1
@@ -792,7 +792,7 @@ mod tests {
 
     #[test]
     fn reports_unsupported_escape_with_the_full_escape_span() {
-        let error = tokenize(r#""bad\\q""#).unwrap_err();
+        let error = tokenize(r#""bad\q""#).unwrap_err();
 
         assert!(error.message.contains("escape"));
         assert_eq!(error.span.start, 4);
@@ -816,7 +816,7 @@ mod tests {
 
     #[test]
     fn indentation_and_dedentation_tokens_have_source_locations() {
-        let tokens = tokenize("if true:\\n    return\\n").unwrap();
+        let tokens = tokenize("if true:\n    return\n").unwrap();
         let indent = tokens
             .iter()
             .find(|token| token.kind == TokenKind::Indent)
@@ -839,7 +839,7 @@ mod tests {
 
     #[test]
     fn supports_lf_crlf_and_lone_cr_line_endings() {
-        let tokens = tokenize("a\\nb\\r\\nc\\rd").unwrap();
+        let tokens = tokenize("a\nb\r\nc\rd").unwrap();
         let identifiers: Vec<_> = tokens
             .iter()
             .filter(|token| token.kind == TokenKind::Identifier)
@@ -858,11 +858,11 @@ mod tests {
 
     #[test]
     fn accepts_tabs_between_tokens_but_rejects_them_in_indentation() {
-        let tokens = tokenize("let\\tvalue = 1").unwrap();
+        let tokens = tokenize("let\tvalue = 1").unwrap();
         assert_eq!(tokens[0].kind, TokenKind::Let);
         assert_eq!(tokens[1].kind, TokenKind::Identifier);
 
-        let error = tokenize("if true:\\n\\treturn\\n").unwrap_err();
+        let error = tokenize("if true:\n\treturn\n").unwrap_err();
         assert!(error.message.contains("tabs"));
         assert_eq!(error.span.start, 9);
         assert_eq!(error.span.end, 10);
@@ -885,7 +885,7 @@ mod tests {
 
     #[test]
     fn emits_only_one_logical_newline_for_final_line_and_blank_tail() {
-        for source in ["value", "value\\n", "value\\n\\n\\n"] {
+        for source in ["value", "value\n", "value\n\n\n"] {
             let tokens = tokenize(source).unwrap();
             assert_eq!(
                 tokens.iter().filter(|token| token.kind == TokenKind::Newline).count(),
