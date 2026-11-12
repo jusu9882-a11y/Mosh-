@@ -619,11 +619,8 @@ mod tests {
         let tokens = tokenize("# heading\n\nlet value = 1 # trailing\n").unwrap();
         assert_eq!(
             tokens
-
                 .iter()
-
                 .filter(|t| t.kind == TokenKind::Newline)
-
                 .count(),
             1
         );
@@ -685,11 +682,8 @@ mod tests {
         let tokens = tokenize("let x = 1\r\nlet y = 2\r\n").unwrap();
         assert_eq!(
             tokens
-
                 .iter()
-
                 .filter(|t| t.kind == TokenKind::Newline)
-
                 .count(),
             2
         );
@@ -810,11 +804,8 @@ mod tests {
         assert_eq!(string.span.end_column, 27);
         assert_eq!(
             tokens
-
                 .iter()
-
                 .filter(|token| token.kind == TokenKind::Newline)
-
                 .count(),
             1
         );
@@ -882,11 +873,8 @@ mod tests {
         assert_eq!(identifiers[3].span.line, 4);
         assert_eq!(
             tokens
-
                 .iter()
-
                 .filter(|token| token.kind == TokenKind::Newline)
-
                 .count(),
             4
         );
@@ -925,11 +913,8 @@ mod tests {
             let tokens = tokenize(source).unwrap();
             assert_eq!(
                 tokens
-
                     .iter()
-
                     .filter(|token| token.kind == TokenKind::Newline)
-
                     .count(),
                 1,
                 "source: {source:?}"
