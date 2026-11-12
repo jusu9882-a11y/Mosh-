@@ -24,7 +24,7 @@ The initial implementation recognizes:
 - An increase in indentation emits one `Indent`.
 - A decrease emits one or more `Dedent` tokens.
 - A dedent must match a previously observed indentation level.
-- CRLF and LF line endings are accepted.
+- LF, CRLF, and lone CR line endings are accepted.
 
 This policy is intentionally conservative. The language design must still decide whether indentation is permanently significant, whether tabs should be configurable, and how multiline expressions interact with newlines.
 
