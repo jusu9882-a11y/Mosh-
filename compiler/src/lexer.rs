@@ -72,7 +72,7 @@ pub enum TokenKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Token {
     pub kind: TokenKind,
-    /// Exact source spelling, including quotes for strings.
+    /// Exact source spelling. Synthetic layout/EOF tokens have an empty lexeme.
     pub lexeme: String,
     pub span: Span,
 }
@@ -139,14 +139,7 @@ impl<'a> Lexer<'a> {
             match self.peek() {
                 Some(b' ' | b'\t') => self.bump(),
                 Some(b'#') => self.skip_comment(),
-                Some(b'\n' | b'\r') => {
-                    // A line containing only whitespace/comments is not a logical newline.
-                    if !self.tokens.last().is_some_and(|t| t.kind == TokenKind::Newline) {
-                        self.consume_newline();
-                    } else {
-                        self.consume_newline();
-                    }
-                }
+                Some(b'\n' | b'\r') => self.consume_newline(),
                 Some(b'"') | Some(b'\'') => self.scan_string()?,
                 Some(b'0'..=b'9') => self.scan_number()?,
                 Some(b'a'..=b'z' | b'A'..=b'Z' | b'_') => self.scan_identifier(),
@@ -156,9 +149,13 @@ impl<'a> Lexer<'a> {
         }
 
         let eof_span = self.point_span();
-        if self.tokens.last().is_some_and(|t| {
-            !matches!(t.kind, TokenKind::Newline | TokenKind::Indent | TokenKind::Dedent)
+        if self.tokens.last().is_some_and(|token| {
+            !matches!(
+                token.kind,
+                TokenKind::Newline | TokenKind::Indent | TokenKind::Dedent
+            )
         }) {
+            // Give a final non-empty source line the same terminator as a newline-ended line.
             self.tokens.push(Token {
                 kind: TokenKind::Newline,
                 lexeme: String::new(),
@@ -196,14 +193,14 @@ impl<'a> Lexer<'a> {
                 b'\t' => {
                     return Err(LexError {
                         message: "tabs are not allowed in indentation; use spaces".into(),
-                        span: self.point_span(),
+                        span: self.span_with_width(1),
                     });
                 }
                 _ => break,
             }
         }
 
-        // Ignore blank lines and comment-only lines.
+        // Blank and comment-only lines do not affect the indentation stack.
         if matches!(self.peek(), None | Some(b'\n' | b'\r')) {
             if self.peek().is_some() {
                 self.consume_newline();
@@ -218,7 +215,7 @@ impl<'a> Lexer<'a> {
             return Ok(());
         }
 
-        let current = *self.indents.last().expect("indent stack always has a base");
+        let current = *self.indents.last().expect("indent stack has a base level");
         if width > current {
             self.indents.push(width);
             self.tokens.push(Token {
@@ -227,7 +224,7 @@ impl<'a> Lexer<'a> {
                 span: self.span_from(start),
             });
         } else if width < current {
-            while width < *self.indents.last().expect("base indentation exists") {
+            while width < *self.indents.last().expect("indent stack has a base level") {
                 self.indents.pop();
                 self.tokens.push(Token {
                     kind: TokenKind::Dedent,
@@ -235,7 +232,7 @@ impl<'a> Lexer<'a> {
                     span: self.point_span(),
                 });
             }
-            if width != *self.indents.last().expect("base indentation exists") {
+            if width != *self.indents.last().expect("indent stack has a base level") {
                 return Err(LexError {
                     message: "indentation does not match any outer block".into(),
                     span: self.point_span(),
@@ -255,6 +252,7 @@ impl<'a> Lexer<'a> {
         ) {
             self.bump();
         }
+
         let text = &self.source[start.start..self.position];
         let kind = match text {
             "function" => TokenKind::Function,
@@ -283,8 +281,8 @@ impl<'a> Lexer<'a> {
         }
 
         let mut is_float = false;
-        if self.peek() == Some(b'.')
-            && self.peek_next().is_some_and(|b| b.is_ascii_digit())
+        // A decimal point belongs to a float only when followed by a digit.
+        if self.peek() == Some(b'.') && self.peek_next().is_some_and(|byte| byte.is_ascii_digit())
         {
             is_float = true;
             self.bump();
@@ -294,23 +292,15 @@ impl<'a> Lexer<'a> {
         }
 
         if matches!(self.peek(), Some(b'e' | b'E')) {
-            let exponent_start = self.position;
+            let exponent_start = self.point_span();
             self.bump();
             if matches!(self.peek(), Some(b'+' | b'-')) {
                 self.bump();
             }
             if !matches!(self.peek(), Some(b'0'..=b'9')) {
-                let error_span = Span {
-                    start: exponent_start,
-                    end: self.position,
-                    line: self.line,
-                    column: self.column.saturating_sub(self.position - exponent_start),
-                    end_line: self.line,
-                    end_column: self.column,
-                };
                 return Err(LexError {
                     message: "numeric exponent requires at least one digit".into(),
-                    span: error_span,
+                    span: self.span_from(exponent_start),
                 });
             }
             is_float = true;
@@ -318,8 +308,13 @@ impl<'a> Lexer<'a> {
                 self.bump();
             }
         }
+
         self.push(
-            if is_float { TokenKind::Float } else { TokenKind::Integer },
+            if is_float {
+                TokenKind::Float
+            } else {
+                TokenKind::Integer
+            },
             start,
         );
         Ok(())
@@ -344,19 +339,36 @@ impl<'a> Lexer<'a> {
                     return Ok(());
                 }
                 Some(b'\\') => {
+                    let escape_start = self.point_span();
                     self.bump();
                     match self.peek() {
-                        Some(b'n' | b'r' | b't' | b'0' | b'\\' | b'"' | b'\'') => self.bump(),
+                        Some(b'n' | b'r' | b't' | b'0' | b'\\' | b'"' | b'\'') => {
+                            self.bump();
+                        }
                         Some(_) => {
+                            let width = self
+                                .source
+                                .get(self.position..)
+                                .and_then(|remaining| remaining.chars().next())
+                                .map(char::len_utf8)
+                                .unwrap_or(1);
+                            let escaped = &self.source[self.position..self.position + width];
                             return Err(LexError {
-                                message: "unsupported escape sequence".into(),
-                                span: self.point_span(),
+                                message: format!("unsupported escape sequence '\\{escaped}'"),
+                                span: Span {
+                                    start: escape_start.start,
+                                    end: self.position + width,
+                                    line: escape_start.line,
+                                    column: escape_start.column,
+                                    end_line: self.line,
+                                    end_column: self.column + width,
+                                },
                             });
                         }
                         None => {
                             return Err(LexError {
                                 message: "unterminated escape sequence".into(),
-                                span: self.point_span(),
+                                span: self.span_from(escape_start),
                             });
                         }
                     }
@@ -402,9 +414,14 @@ impl<'a> Lexer<'a> {
                     b'^' => TokenKind::Caret,
                     b'~' => TokenKind::Tilde,
                     _ => {
+                        let character = self.source[self.position..]
+                            .chars()
+                            .next()
+                            .expect("position is before the end of source");
+                        let span = self.span_with_width(character.len_utf8());
                         return Err(LexError {
-                            message: format!("unexpected character '{}'", first as char),
-                            span: self.point_span(),
+                            message: format!("unexpected character '{character}'"),
+                            span,
                         });
                     }
                 };
@@ -444,13 +461,21 @@ impl<'a> Lexer<'a> {
         } else if self.peek() == Some(b'\n') {
             self.position += 1;
         }
+
+        let lexeme = self.source[start.start..self.position].to_string();
         self.line += 1;
         self.column = 1;
         self.at_line_start = true;
-        if self.tokens.last().is_some_and(|t| t.kind != TokenKind::Newline) {
+
+        // Collapse blank/comment-only lines; retain the original line ending on emitted tokens.
+        if self
+            .tokens
+            .last()
+            .is_some_and(|token| token.kind != TokenKind::Newline)
+        {
             self.tokens.push(Token {
                 kind: TokenKind::Newline,
-                lexeme: String::new(),
+                lexeme,
                 span: Span {
                     start: start.start,
                     end: self.position,
@@ -489,6 +514,17 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    fn span_with_width(&self, width: usize) -> Span {
+        Span {
+            start: self.position,
+            end: self.position + width,
+            line: self.line,
+            column: self.column,
+            end_line: self.line,
+            end_column: self.column + width,
+        }
+    }
+
     fn span_from(&self, start: Span) -> Span {
         Span {
             start: start.start,
@@ -505,23 +541,175 @@ impl<'a> Lexer<'a> {
 mod tests {
     use super::{tokenize, TokenKind};
 
+    fn kinds(source: &str) -> Vec<TokenKind> {
+        tokenize(source)
+            .expect("source should tokenize")
+            .into_iter()
+            .map(|token| token.kind)
+            .collect()
+    }
+
     #[test]
-    fn recognizes_keywords_identifiers_and_punctuation() {
-        let tokens = tokenize("function main():\n    return true\n").unwrap();
-        let kinds: Vec<_> = tokens.iter().map(|t| t.kind.clone()).collect();
+    fn recognizes_provisional_keywords_and_ascii_identifiers() {
         assert_eq!(
-            kinds,
+            kinds(
+                "function function_name return returning if iff else while for in let mut true false unsafe struct enum"
+            ),
             vec![
                 TokenKind::Function,
                 TokenKind::Identifier,
+                TokenKind::Return,
+                TokenKind::Identifier,
+                TokenKind::If,
+                TokenKind::Identifier,
+                TokenKind::Else,
+                TokenKind::While,
+                TokenKind::For,
+                TokenKind::In,
+                TokenKind::Let,
+                TokenKind::Mut,
+                TokenKind::True,
+                TokenKind::False,
+                TokenKind::Unsafe,
+                TokenKind::Struct,
+                TokenKind::Enum,
+                TokenKind::Newline,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn recognizes_all_current_operators_and_punctuation() {
+        assert_eq!(
+            kinds("()[]{}:,. + - * / % = == ! != < <= > >= -> & | ^ ~"),
+            vec![
                 TokenKind::LeftParen,
                 TokenKind::RightParen,
+                TokenKind::LeftBracket,
+                TokenKind::RightBracket,
+                TokenKind::LeftBrace,
+                TokenKind::RightBrace,
+                TokenKind::Colon,
+                TokenKind::Comma,
+                TokenKind::Dot,
+                TokenKind::Plus,
+                TokenKind::Minus,
+                TokenKind::Star,
+                TokenKind::Slash,
+                TokenKind::Percent,
+                TokenKind::Assign,
+                TokenKind::Equal,
+                TokenKind::Bang,
+                TokenKind::NotEqual,
+                TokenKind::Less,
+                TokenKind::LessEqual,
+                TokenKind::Greater,
+                TokenKind::GreaterEqual,
+                TokenKind::Arrow,
+                TokenKind::Ampersand,
+                TokenKind::Pipe,
+                TokenKind::Caret,
+                TokenKind::Tilde,
+                TokenKind::Newline,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn recognizes_integer_decimal_and_exponent_forms() {
+        let tokens = tokenize("0 42 3.14 6e2 7.0e-1 1. 1..2").unwrap();
+        let values: Vec<_> = tokens
+            .iter()
+            .map(|token| (token.kind.clone(), token.lexeme.as_str()))
+            .collect();
+
+        assert_eq!(
+            values,
+            vec![
+                (TokenKind::Integer, "0"),
+                (TokenKind::Integer, "42"),
+                (TokenKind::Float, "3.14"),
+                (TokenKind::Float, "6e2"),
+                (TokenKind::Float, "7.0e-1"),
+                (TokenKind::Integer, "1"),
+                (TokenKind::Dot, "."),
+                (TokenKind::Integer, "1"),
+                (TokenKind::Dot, "."),
+                (TokenKind::Dot, "."),
+                (TokenKind::Integer, "2"),
+                (TokenKind::Newline, ""),
+                (TokenKind::Eof, ""),
+            ]
+        );
+    }
+
+    #[test]
+    fn preserves_single_and_double_quoted_strings_and_supported_escapes() {
+        let source = r#""a\n\r\t\0\\\"\'" 'b\''"#;
+        let tokens = tokenize(source).unwrap();
+
+        assert_eq!(tokens[0].kind, TokenKind::String);
+        assert_eq!(tokens[1].kind, TokenKind::String);
+        assert_eq!(
+            &source[tokens[0].span.start..tokens[0].span.end],
+            tokens[0].lexeme
+        );
+        assert_eq!(
+            &source[tokens[1].span.start..tokens[1].span.end],
+            tokens[1].lexeme
+        );
+        assert_eq!(tokens[2].kind, TokenKind::Newline);
+        assert_eq!(tokens[3].kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn emits_nested_indentation_and_dedentation_in_order() {
+        assert_eq!(
+            kinds("if true:\n    if false:\n        return\n    return\nreturn\n"),
+            vec![
+                TokenKind::If,
+                TokenKind::True,
+                TokenKind::Colon,
+                TokenKind::Newline,
+                TokenKind::Indent,
+                TokenKind::If,
+                TokenKind::False,
                 TokenKind::Colon,
                 TokenKind::Newline,
                 TokenKind::Indent,
                 TokenKind::Return,
-                TokenKind::True,
                 TokenKind::Newline,
+                TokenKind::Dedent,
+                TokenKind::Return,
+                TokenKind::Newline,
+                TokenKind::Dedent,
+                TokenKind::Return,
+                TokenKind::Newline,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn emits_all_required_dedents_at_eof_without_a_final_newline() {
+        assert_eq!(
+            kinds("if true:\n    if true:\n        return"),
+            vec![
+                TokenKind::If,
+                TokenKind::True,
+                TokenKind::Colon,
+                TokenKind::Newline,
+                TokenKind::Indent,
+                TokenKind::If,
+                TokenKind::True,
+                TokenKind::Colon,
+                TokenKind::Newline,
+                TokenKind::Indent,
+                TokenKind::Return,
+                TokenKind::Newline,
+                TokenKind::Dedent,
                 TokenKind::Dedent,
                 TokenKind::Eof,
             ]
@@ -529,125 +717,167 @@ mod tests {
     }
 
     #[test]
-    fn recognizes_integer_float_and_exponent() {
-        let tokens = tokenize("12 3.5 6e2 7.0e-1").unwrap();
-        let kinds: Vec<_> = tokens.iter().map(|t| t.kind.clone()).collect();
-        assert_eq!(
-            kinds,
-            vec![
-                TokenKind::Integer,
-                TokenKind::Float,
-                TokenKind::Float,
-                TokenKind::Float,
-                TokenKind::Newline,
-                TokenKind::Eof,
-            ]
-        );
-    }
+    fn ignores_blank_and_comment_only_lines_and_recognizes_trailing_comments() {
+        let tokens = tokenize(
+            "# heading\n\nlet value = 1 # trailing\n  # indented comment\n\nlet next = 2\n",
+        )
+        .unwrap();
 
-    #[test]
-    fn preserves_quoted_strings_and_escapes() {
-        let tokens = tokenize(r#""hello\nworld" 'mosh'"#).unwrap();
-        assert_eq!(tokens[0].kind, TokenKind::String);
-        assert_eq!(tokens[0].lexeme, r#""hello\nworld""#);
-        assert_eq!(tokens[1].kind, TokenKind::String);
-    }
-
-    #[test]
-    fn recognizes_operators_longest_first() {
-        let tokens = tokenize("a==b != c <= d >= e -> f").unwrap();
-        let kinds: Vec<_> = tokens.iter().map(|t| t.kind.clone()).collect();
         assert_eq!(
-            kinds,
-            vec![
-                TokenKind::Identifier,
-                TokenKind::Equal,
-                TokenKind::Identifier,
-                TokenKind::NotEqual,
-                TokenKind::Identifier,
-                TokenKind::LessEqual,
-                TokenKind::Identifier,
-                TokenKind::GreaterEqual,
-                TokenKind::Identifier,
-                TokenKind::Arrow,
-                TokenKind::Identifier,
-                TokenKind::Newline,
-                TokenKind::Eof,
-            ]
-        );
-    }
-
-    #[test]
-    fn emits_nested_indentation_and_dedentation() {
-        let tokens = tokenize("if true:\n    if false:\n        return\n    return\n").unwrap();
-        let kinds: Vec<_> = tokens.iter().map(|t| t.kind.clone()).collect();
-        assert_eq!(
-            kinds.iter().filter(|k| **k == TokenKind::Indent).count(),
+            tokens
+                .iter()
+                .filter(|token| token.kind == TokenKind::Newline)
+                .count(),
             2
         );
-        assert_eq!(
-            kinds.iter().filter(|k| **k == TokenKind::Dedent).count(),
-            2
-        );
+        assert!(!tokens.iter().any(|token| {
+            matches!(token.kind, TokenKind::Indent | TokenKind::Dedent)
+        }));
     }
 
     #[test]
-    fn ignores_blank_and_comment_only_lines() {
-        let tokens = tokenize("# heading\n\nlet value = 1 # trailing\n").unwrap();
-        assert_eq!(
-            tokens.iter().filter(|t| t.kind == TokenKind::Newline).count(),
-            1
-        );
-    }
-
-    #[test]
-    fn reports_unmatched_indentation() {
+    fn reports_indentation_that_does_not_match_an_outer_level() {
         let error = tokenize("if true:\n    return\n  return\n").unwrap_err();
         assert!(error.message.contains("indentation"));
         assert_eq!(error.span.line, 3);
+        assert_eq!(error.span.column, 3);
     }
 
     #[test]
-    fn reports_tabs_in_indentation() {
+    fn reports_tabs_in_indentation_but_allows_horizontal_tabs_between_tokens() {
         let error = tokenize("if true:\n\treturn\n").unwrap_err();
         assert!(error.message.contains("tabs"));
         assert_eq!(error.span.line, 2);
-    }
+        assert_eq!(error.span.column, 1);
 
-    #[test]
-    fn reports_unterminated_strings_and_bad_escapes() {
-        assert!(tokenize(r#""unfinished"#).unwrap_err().message.contains("unterminated"));
-        assert!(tokenize(r#""bad\q""#).unwrap_err().message.contains("escape"));
-    }
-
-    #[test]
-    fn reports_unknown_characters_with_source_position() {
-        let error = tokenize("let x = @").unwrap_err();
-        assert_eq!(error.span.line, 1);
-        assert_eq!(error.span.column, 9);
-    }
-
-    #[test]
-    fn reports_malformed_numeric_exponents() {
-        let error = tokenize("42e+").unwrap_err();
-        assert!(error.message.contains("exponent"));
-    }
-
-    #[test]
-    fn newline_span_points_to_the_actual_line_end() {
-        let tokens = tokenize("x = 1\n").unwrap();
-        let newline = tokens.iter().find(|t| t.kind == TokenKind::Newline).unwrap();
-        assert_eq!(newline.span.line, 1);
-        assert_eq!(newline.span.column, 6);
-        assert_eq!(newline.span.end_line, 2);
-    }
-
-    #[test]
-    fn supports_crlf_line_endings() {
-        let tokens = tokenize("let x = 1\r\nlet y = 2\r\n").unwrap();
         assert_eq!(
-            tokens.iter().filter(|t| t.kind == TokenKind::Newline).count(),
-            2
+            kinds("let\tname = 1"),
+            vec![
+                TokenKind::Let,
+                TokenKind::Identifier,
+                TokenKind::Assign,
+                TokenKind::Integer,
+                TokenKind::Newline,
+                TokenKind::Eof,
+            ]
         );
     }
+
+    #[test]
+    fn reports_unterminated_strings_at_eof_and_before_a_newline() {
+        let eof_error = tokenize("\"unfinished").unwrap_err();
+        assert!(eof_error.message.contains("unterminated string"));
+        assert_eq!(eof_error.span.line, 1);
+        assert_eq!(eof_error.span.column, 1);
+
+        let newline_error = tokenize("\"first line\nsecond line\"").unwrap_err();
+        assert!(newline_error.message.contains("unterminated string"));
+        assert_eq!(newline_error.span.line, 1);
+    }
+
+    #[test]
+    fn reports_unsupported_and_unterminated_escape_sequences_with_spans() {
+        let error = tokenize(r#""bad\q""#).unwrap_err();
+        assert!(error.message.contains("unsupported escape"));
+        assert_eq!(error.span.start, 4);
+        assert_eq!(error.span.end, 6);
+        assert_eq!(error.span.column, 5);
+        assert_eq!(error.span.end_column, 7);
+
+        let trailing_escape = tokenize("\"unfinished\\").unwrap_err();
+        assert!(trailing_escape.message.contains("unterminated escape"));
+    }
+
+    #[test]
+    fn reports_malformed_numeric_exponents_with_the_exponent_span() {
+        let error = tokenize("42e+").unwrap_err();
+        assert!(error.message.contains("exponent"));
+        assert_eq!(error.span.start, 2);
+        assert_eq!(error.span.end, 4);
+        assert_eq!(error.span.column, 3);
+        assert_eq!(error.span.end_column, 5);
+
+        assert!(tokenize("1E").unwrap_err().message.contains("exponent"));
+    }
+
+    #[test]
+    fn reports_unknown_ascii_and_unicode_characters_with_full_spans() {
+        let ascii_error = tokenize("let x = @").unwrap_err();
+        assert_eq!(ascii_error.span.line, 1);
+        assert_eq!(ascii_error.span.column, 9);
+        assert_eq!(ascii_error.span.end_column, 10);
+        assert!(ascii_error.message.contains("@"));
+
+        let unicode_error = tokenize("let x = é").unwrap_err();
+        assert_eq!(unicode_error.span.start, 8);
+        assert_eq!(unicode_error.span.end, 10);
+        assert_eq!(unicode_error.span.column, 9);
+        assert_eq!(unicode_error.span.end_column, 11);
+        assert!(unicode_error.message.contains("é"));
+    }
+
+    #[test]
+    fn records_token_spans_as_utf8_byte_offsets_and_byte_columns() {
+        let source = "let x = \"é\"\n";
+        let tokens = tokenize(source).unwrap();
+        let string = tokens
+            .iter()
+            .find(|token| token.kind == TokenKind::String)
+            .unwrap();
+
+        assert_eq!(string.span.start, 8);
+        assert_eq!(string.span.end, 12);
+        assert_eq!(string.span.line, 1);
+        assert_eq!(string.span.column, 9);
+        assert_eq!(string.span.end_line, 1);
+        assert_eq!(string.span.end_column, 13);
+
+        let newline = tokens
+            .iter()
+            .find(|token| token.kind == TokenKind::Newline)
+            .unwrap();
+        assert_eq!(newline.span.start, 12);
+        assert_eq!(newline.span.end, 13);
+        assert_eq!(newline.span.end_line, 2);
+        assert_eq!(newline.lexeme, "\n");
+    }
+
+    #[test]
+    fn preserves_crlf_and_cr_newline_spellings_and_locations() {
+        let crlf_tokens = tokenize("x\r\n").unwrap();
+        let crlf = crlf_tokens
+            .iter()
+            .find(|token| token.kind == TokenKind::Newline)
+            .unwrap();
+        assert_eq!(crlf.lexeme, "\r\n");
+        assert_eq!(crlf.span.start, 1);
+        assert_eq!(crlf.span.end, 3);
+        assert_eq!(crlf.span.line, 1);
+        assert_eq!(crlf.span.column, 2);
+        assert_eq!(crlf.span.end_line, 2);
+        assert_eq!(crlf.span.end_column, 1);
+
+        let cr_tokens = tokenize("x\r").unwrap();
+        let cr = cr_tokens
+            .iter()
+            .find(|token| token.kind == TokenKind::Newline)
+            .unwrap();
+        assert_eq!(cr.lexeme, "\r");
+        assert_eq!(cr.span.end_line, 2);
+    }
+
+    #[test]
+    fn emits_eof_for_empty_source_and_a_synthetic_newline_for_unterminated_lines() {
+        let empty = tokenize("").unwrap();
+        assert_eq!(empty.len(), 1);
+        assert_eq!(empty[0].kind, TokenKind::Eof);
+        assert_eq!(empty[0].span.line, 1);
+        assert_eq!(empty[0].span.column, 1);
+
+        let tokens = tokenize("let answer = 42").unwrap();
+        assert_eq!(tokens[tokens.len() - 2].kind, TokenKind::Newline);
+        assert!(tokens[tokens.len() - 2].lexeme.is_empty());
+        assert_eq!(tokens[tokens.len() - 1].kind, TokenKind::Eof);
+    }
+
 }
