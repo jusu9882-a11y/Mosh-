@@ -56,7 +56,12 @@ impl<'a> Parser<'a> {
         let mut statements = Vec::new();
         self.skip_newlines();
         while !self.check(&TokenKind::Eof) {
-            if self.check(&TokenKind::Dedent) { return Err(self.error("unexpected dedentation")); }
+            if self.check(&TokenKind::Indent) {
+                return Err(self.error("unexpected indentation at top level"));
+            }
+            if self.check(&TokenKind::Dedent) {
+                return Err(self.error("unexpected dedentation"));
+            }
             statements.push(self.statement()?);
             self.statement_end()?;
             self.skip_newlines();
@@ -404,7 +409,7 @@ mod tests {
     #[test]
     fn rejects_unexpected_top_level_dedent() {
         let e = parsed("    let x = 1\n").unwrap_err();
-        assert!(e.message.contains("dedentation"));
+        assert!(e.message.contains("indentation"));
     }
 
     #[test]
