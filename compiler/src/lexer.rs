@@ -150,7 +150,10 @@ impl<'a> Lexer<'a> {
 
         let eof_span = self.point_span();
         if self.tokens.last().is_some_and(|t| {
-            !matches!(t.kind, TokenKind::Newline | TokenKind::Indent | TokenKind::Dedent)
+            !matches!(
+                t.kind,
+                TokenKind::Newline | TokenKind::Indent | TokenKind::Dedent
+            )
         }) {
             self.tokens.push(Token {
                 kind: TokenKind::Newline,
@@ -276,9 +279,7 @@ impl<'a> Lexer<'a> {
         }
 
         let mut is_float = false;
-        if self.peek() == Some(b'.')
-            && self.peek_next().is_some_and(|b| b.is_ascii_digit())
-        {
+        if self.peek() == Some(b'.') && self.peek_next().is_some_and(|b| b.is_ascii_digit()) {
             is_float = true;
             self.bump();
             while matches!(self.peek(), Some(b'0'..=b'9')) {
@@ -312,7 +313,11 @@ impl<'a> Lexer<'a> {
             }
         }
         self.push(
-            if is_float { TokenKind::Float } else { TokenKind::Integer },
+            if is_float {
+                TokenKind::Float
+            } else {
+                TokenKind::Integer
+            },
             start,
         );
         Ok(())
@@ -453,7 +458,11 @@ impl<'a> Lexer<'a> {
         self.line += 1;
         self.column = 1;
         self.at_line_start = true;
-        if self.tokens.last().is_some_and(|t| t.kind != TokenKind::Newline) {
+        if self
+            .tokens
+            .last()
+            .is_some_and(|t| t.kind != TokenKind::Newline)
+        {
             self.tokens.push(Token {
                 kind: TokenKind::Newline,
                 lexeme: String::new(),
@@ -601,21 +610,21 @@ mod tests {
     fn emits_nested_indentation_and_dedentation() {
         let tokens = tokenize("if true:\n    if false:\n        return\n    return\n").unwrap();
         let kinds: Vec<_> = tokens.iter().map(|t| t.kind.clone()).collect();
-        assert_eq!(
-            kinds.iter().filter(|k| **k == TokenKind::Indent).count(),
-            2
-        );
-        assert_eq!(
-            kinds.iter().filter(|k| **k == TokenKind::Dedent).count(),
-            2
-        );
+        assert_eq!(kinds.iter().filter(|k| **k == TokenKind::Indent).count(), 2);
+        assert_eq!(kinds.iter().filter(|k| **k == TokenKind::Dedent).count(), 2);
     }
 
     #[test]
     fn ignores_blank_and_comment_only_lines() {
         let tokens = tokenize("# heading\n\nlet value = 1 # trailing\n").unwrap();
         assert_eq!(
-            tokens.iter().filter(|t| t.kind == TokenKind::Newline).count(),
+            tokens
+
+                .iter()
+
+                .filter(|t| t.kind == TokenKind::Newline)
+
+                .count(),
             1
         );
     }
@@ -636,8 +645,14 @@ mod tests {
 
     #[test]
     fn reports_unterminated_strings_and_bad_escapes() {
-        assert!(tokenize(r#""unfinished"#).unwrap_err().message.contains("unterminated"));
-        assert!(tokenize(r#""bad\q""#).unwrap_err().message.contains("escape"));
+        assert!(tokenize(r#""unfinished"#)
+            .unwrap_err()
+            .message
+            .contains("unterminated"));
+        assert!(tokenize(r#""bad\q""#)
+            .unwrap_err()
+            .message
+            .contains("escape"));
     }
 
     #[test]
@@ -656,7 +671,10 @@ mod tests {
     #[test]
     fn newline_span_points_to_the_actual_line_end() {
         let tokens = tokenize("x = 1\n").unwrap();
-        let newline = tokens.iter().find(|t| t.kind == TokenKind::Newline).unwrap();
+        let newline = tokens
+            .iter()
+            .find(|t| t.kind == TokenKind::Newline)
+            .unwrap();
         assert_eq!(newline.span.line, 1);
         assert_eq!(newline.span.column, 6);
         assert_eq!(newline.span.end_line, 2);
@@ -666,7 +684,13 @@ mod tests {
     fn supports_crlf_line_endings() {
         let tokens = tokenize("let x = 1\r\nlet y = 2\r\n").unwrap();
         assert_eq!(
-            tokens.iter().filter(|t| t.kind == TokenKind::Newline).count(),
+            tokens
+
+                .iter()
+
+                .filter(|t| t.kind == TokenKind::Newline)
+
+                .count(),
             2
         );
     }
@@ -785,7 +809,13 @@ mod tests {
         assert_eq!(string.span.column, 12);
         assert_eq!(string.span.end_column, 27);
         assert_eq!(
-            tokens.iter().filter(|token| token.kind == TokenKind::Newline).count(),
+            tokens
+
+                .iter()
+
+                .filter(|token| token.kind == TokenKind::Newline)
+
+                .count(),
             1
         );
     }
@@ -851,7 +881,13 @@ mod tests {
         assert_eq!(identifiers[2].span.line, 3);
         assert_eq!(identifiers[3].span.line, 4);
         assert_eq!(
-            tokens.iter().filter(|token| token.kind == TokenKind::Newline).count(),
+            tokens
+
+                .iter()
+
+                .filter(|token| token.kind == TokenKind::Newline)
+
+                .count(),
             4
         );
     }
@@ -888,12 +924,17 @@ mod tests {
         for source in ["value", "value\n", "value\n\n\n"] {
             let tokens = tokenize(source).unwrap();
             assert_eq!(
-                tokens.iter().filter(|token| token.kind == TokenKind::Newline).count(),
+                tokens
+
+                    .iter()
+
+                    .filter(|token| token.kind == TokenKind::Newline)
+
+                    .count(),
                 1,
                 "source: {source:?}"
             );
             assert_eq!(tokens.last().unwrap().kind, TokenKind::Eof);
         }
     }
-
 }
