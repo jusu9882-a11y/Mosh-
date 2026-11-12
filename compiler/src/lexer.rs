@@ -139,14 +139,7 @@ impl<'a> Lexer<'a> {
             match self.peek() {
                 Some(b' ' | b'\t') => self.bump(),
                 Some(b'#') => self.skip_comment(),
-                Some(b'\n' | b'\r') => {
-                    // A line containing only whitespace/comments is not a logical newline.
-                    if !self.tokens.last().is_some_and(|t| t.kind == TokenKind::Newline) {
-                        self.consume_newline();
-                    } else {
-                        self.consume_newline();
-                    }
-                }
+                Some(b'\n' | b'\r') => self.consume_newline(),
                 Some(b'"') | Some(b'\'') => self.scan_string()?,
                 Some(b'0'..=b'9') => self.scan_number()?,
                 Some(b'a'..=b'z' | b'A'..=b'Z' | b'_') => self.scan_identifier(),
@@ -157,7 +150,10 @@ impl<'a> Lexer<'a> {
 
         let eof_span = self.point_span();
         if self.tokens.last().is_some_and(|t| {
-            !matches!(t.kind, TokenKind::Newline | TokenKind::Indent | TokenKind::Dedent)
+            !matches!(
+                t.kind,
+                TokenKind::Newline | TokenKind::Indent | TokenKind::Dedent
+            )
         }) {
             self.tokens.push(Token {
                 kind: TokenKind::Newline,
@@ -196,7 +192,7 @@ impl<'a> Lexer<'a> {
                 b'\t' => {
                     return Err(LexError {
                         message: "tabs are not allowed in indentation; use spaces".into(),
-                        span: self.point_span(),
+                        span: self.next_char_span(),
                     });
                 }
                 _ => break,
@@ -283,9 +279,7 @@ impl<'a> Lexer<'a> {
         }
 
         let mut is_float = false;
-        if self.peek() == Some(b'.')
-            && self.peek_next().is_some_and(|b| b.is_ascii_digit())
-        {
+        if self.peek() == Some(b'.') && self.peek_next().is_some_and(|b| b.is_ascii_digit()) {
             is_float = true;
             self.bump();
             while matches!(self.peek(), Some(b'0'..=b'9')) {
@@ -319,7 +313,11 @@ impl<'a> Lexer<'a> {
             }
         }
         self.push(
-            if is_float { TokenKind::Float } else { TokenKind::Integer },
+            if is_float {
+                TokenKind::Float
+            } else {
+                TokenKind::Integer
+            },
             start,
         );
         Ok(())
@@ -344,19 +342,28 @@ impl<'a> Lexer<'a> {
                     return Ok(());
                 }
                 Some(b'\\') => {
+                    let escape_start = self.point_span();
                     self.bump();
                     match self.peek() {
                         Some(b'n' | b'r' | b't' | b'0' | b'\\' | b'"' | b'\'') => self.bump(),
                         Some(_) => {
+                            let invalid_char = self.next_char_span();
                             return Err(LexError {
                                 message: "unsupported escape sequence".into(),
-                                span: self.point_span(),
+                                span: Span {
+                                    start: escape_start.start,
+                                    end: invalid_char.end,
+                                    line: escape_start.line,
+                                    column: escape_start.column,
+                                    end_line: invalid_char.end_line,
+                                    end_column: invalid_char.end_column,
+                                },
                             });
                         }
                         None => {
                             return Err(LexError {
                                 message: "unterminated escape sequence".into(),
-                                span: self.point_span(),
+                                span: self.span_from(escape_start),
                             });
                         }
                     }
@@ -402,9 +409,13 @@ impl<'a> Lexer<'a> {
                     b'^' => TokenKind::Caret,
                     b'~' => TokenKind::Tilde,
                     _ => {
+                        let unexpected = self.source[self.position..]
+                            .chars()
+                            .next()
+                            .expect("position is in bounds");
                         return Err(LexError {
-                            message: format!("unexpected character '{}'", first as char),
-                            span: self.point_span(),
+                            message: format!("unexpected character '{unexpected}'"),
+                            span: self.next_char_span(),
                         });
                     }
                 };
@@ -447,7 +458,11 @@ impl<'a> Lexer<'a> {
         self.line += 1;
         self.column = 1;
         self.at_line_start = true;
-        if self.tokens.last().is_some_and(|t| t.kind != TokenKind::Newline) {
+        if self
+            .tokens
+            .last()
+            .is_some_and(|t| t.kind != TokenKind::Newline)
+        {
             self.tokens.push(Token {
                 kind: TokenKind::Newline,
                 lexeme: String::new(),
@@ -476,6 +491,20 @@ impl<'a> Lexer<'a> {
 
     fn peek_next(&self) -> Option<u8> {
         self.bytes.get(self.position + 1).copied()
+    }
+
+    fn next_char_span(&self) -> Span {
+        let start = self.point_span();
+        let width = self.source[self.position..]
+            .chars()
+            .next()
+            .map(char::len_utf8)
+            .unwrap_or(0);
+        Span {
+            end: self.position + width,
+            end_column: self.column + width,
+            ..start
+        }
     }
 
     fn point_span(&self) -> Span {
@@ -581,21 +610,18 @@ mod tests {
     fn emits_nested_indentation_and_dedentation() {
         let tokens = tokenize("if true:\n    if false:\n        return\n    return\n").unwrap();
         let kinds: Vec<_> = tokens.iter().map(|t| t.kind.clone()).collect();
-        assert_eq!(
-            kinds.iter().filter(|k| **k == TokenKind::Indent).count(),
-            2
-        );
-        assert_eq!(
-            kinds.iter().filter(|k| **k == TokenKind::Dedent).count(),
-            2
-        );
+        assert_eq!(kinds.iter().filter(|k| **k == TokenKind::Indent).count(), 2);
+        assert_eq!(kinds.iter().filter(|k| **k == TokenKind::Dedent).count(), 2);
     }
 
     #[test]
     fn ignores_blank_and_comment_only_lines() {
         let tokens = tokenize("# heading\n\nlet value = 1 # trailing\n").unwrap();
         assert_eq!(
-            tokens.iter().filter(|t| t.kind == TokenKind::Newline).count(),
+            tokens
+                .iter()
+                .filter(|t| t.kind == TokenKind::Newline)
+                .count(),
             1
         );
     }
@@ -616,8 +642,14 @@ mod tests {
 
     #[test]
     fn reports_unterminated_strings_and_bad_escapes() {
-        assert!(tokenize(r#""unfinished"#).unwrap_err().message.contains("unterminated"));
-        assert!(tokenize(r#""bad\q""#).unwrap_err().message.contains("escape"));
+        assert!(tokenize(r#""unfinished"#)
+            .unwrap_err()
+            .message
+            .contains("unterminated"));
+        assert!(tokenize(r#""bad\q""#)
+            .unwrap_err()
+            .message
+            .contains("escape"));
     }
 
     #[test]
@@ -636,7 +668,10 @@ mod tests {
     #[test]
     fn newline_span_points_to_the_actual_line_end() {
         let tokens = tokenize("x = 1\n").unwrap();
-        let newline = tokens.iter().find(|t| t.kind == TokenKind::Newline).unwrap();
+        let newline = tokens
+            .iter()
+            .find(|t| t.kind == TokenKind::Newline)
+            .unwrap();
         assert_eq!(newline.span.line, 1);
         assert_eq!(newline.span.column, 6);
         assert_eq!(newline.span.end_line, 2);
@@ -646,8 +681,245 @@ mod tests {
     fn supports_crlf_line_endings() {
         let tokens = tokenize("let x = 1\r\nlet y = 2\r\n").unwrap();
         assert_eq!(
-            tokens.iter().filter(|t| t.kind == TokenKind::Newline).count(),
+            tokens
+                .iter()
+                .filter(|t| t.kind == TokenKind::Newline)
+                .count(),
             2
         );
+    }
+
+    #[test]
+    fn recognizes_all_provisional_keywords_and_identifier_prefixes() {
+        let tokens = tokenize(
+            "function return if else while for in let mut true false unsafe struct enum function_name",
+        )
+        .unwrap();
+        let kinds: Vec<_> = tokens.iter().map(|token| token.kind.clone()).collect();
+
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Function,
+                TokenKind::Return,
+                TokenKind::If,
+                TokenKind::Else,
+                TokenKind::While,
+                TokenKind::For,
+                TokenKind::In,
+                TokenKind::Let,
+                TokenKind::Mut,
+                TokenKind::True,
+                TokenKind::False,
+                TokenKind::Unsafe,
+                TokenKind::Struct,
+                TokenKind::Enum,
+                TokenKind::Identifier,
+                TokenKind::Newline,
+                TokenKind::Eof,
+            ]
+        );
+        assert_eq!(tokens[14].lexeme, "function_name");
+    }
+
+    #[test]
+    fn recognizes_every_current_operator_and_punctuation_token() {
+        let tokens = tokenize("() [] {} : , . + - * / % = == ! != < <= > >= -> & | ^ ~").unwrap();
+        let kinds: Vec<_> = tokens.iter().map(|token| token.kind.clone()).collect();
+
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::LeftParen,
+                TokenKind::RightParen,
+                TokenKind::LeftBracket,
+                TokenKind::RightBracket,
+                TokenKind::LeftBrace,
+                TokenKind::RightBrace,
+                TokenKind::Colon,
+                TokenKind::Comma,
+                TokenKind::Dot,
+                TokenKind::Plus,
+                TokenKind::Minus,
+                TokenKind::Star,
+                TokenKind::Slash,
+                TokenKind::Percent,
+                TokenKind::Assign,
+                TokenKind::Equal,
+                TokenKind::Bang,
+                TokenKind::NotEqual,
+                TokenKind::Less,
+                TokenKind::LessEqual,
+                TokenKind::Greater,
+                TokenKind::GreaterEqual,
+                TokenKind::Arrow,
+                TokenKind::Ampersand,
+                TokenKind::Pipe,
+                TokenKind::Caret,
+                TokenKind::Tilde,
+                TokenKind::Newline,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn recognizes_conservative_decimal_and_exponent_number_forms() {
+        let tokens = tokenize("0 123 1.0 2e3 4.5E-6 7E+8 42.").unwrap();
+        let actual: Vec<_> = tokens
+            .iter()
+            .map(|token| (token.kind.clone(), token.lexeme.as_str()))
+            .collect();
+
+        assert_eq!(
+            actual,
+            vec![
+                (TokenKind::Integer, "0"),
+                (TokenKind::Integer, "123"),
+                (TokenKind::Float, "1.0"),
+                (TokenKind::Float, "2e3"),
+                (TokenKind::Float, "4.5E-6"),
+                (TokenKind::Float, "7E+8"),
+                (TokenKind::Integer, "42"),
+                (TokenKind::Dot, "."),
+                (TokenKind::Newline, ""),
+                (TokenKind::Eof, ""),
+            ]
+        );
+    }
+
+    #[test]
+    fn preserves_unicode_string_lexemes_and_hash_characters() {
+        let tokens = tokenize("let text = \"héllo # mosh\" # trailing comment\n").unwrap();
+        let string = tokens
+            .iter()
+            .find(|token| token.kind == TokenKind::String)
+            .unwrap();
+
+        assert_eq!(string.lexeme, "\"héllo # mosh\"");
+        assert_eq!(string.span.start, 11);
+        assert_eq!(string.span.end, 26);
+        assert_eq!(string.span.line, 1);
+        assert_eq!(string.span.column, 12);
+        assert_eq!(string.span.end_column, 27);
+        assert_eq!(
+            tokens
+                .iter()
+                .filter(|token| token.kind == TokenKind::Newline)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn reports_unsupported_escape_with_the_full_escape_span() {
+        let error = tokenize(r#""bad\q""#).unwrap_err();
+
+        assert!(error.message.contains("escape"));
+        assert_eq!(error.span.start, 4);
+        assert_eq!(error.span.end, 6);
+        assert_eq!(error.span.line, 1);
+        assert_eq!(error.span.column, 5);
+        assert_eq!(error.span.end_column, 7);
+    }
+
+    #[test]
+    fn reports_non_ascii_unknown_characters_with_utf8_byte_spans() {
+        let error = tokenize("let café = 1").unwrap_err();
+
+        assert_eq!(error.message, "unexpected character 'é'");
+        assert_eq!(error.span.start, 7);
+        assert_eq!(error.span.end, 9);
+        assert_eq!(error.span.line, 1);
+        assert_eq!(error.span.column, 8);
+        assert_eq!(error.span.end_column, 10);
+    }
+
+    #[test]
+    fn indentation_and_dedentation_tokens_have_source_locations() {
+        let tokens = tokenize("if true:\n    return\n").unwrap();
+        let indent = tokens
+            .iter()
+            .find(|token| token.kind == TokenKind::Indent)
+            .unwrap();
+        let dedent = tokens
+            .iter()
+            .find(|token| token.kind == TokenKind::Dedent)
+            .unwrap();
+
+        assert_eq!(indent.lexeme, "    ");
+        assert_eq!(indent.span.start, 9);
+        assert_eq!(indent.span.end, 13);
+        assert_eq!(indent.span.line, 2);
+        assert_eq!(indent.span.column, 1);
+        assert_eq!(indent.span.end_column, 5);
+        assert_eq!(dedent.span.line, 3);
+        assert_eq!(dedent.span.column, 1);
+        assert_eq!(dedent.span.start, dedent.span.end);
+    }
+
+    #[test]
+    fn supports_lf_crlf_and_lone_cr_line_endings() {
+        let tokens = tokenize("a\nb\r\nc\rd").unwrap();
+        let identifiers: Vec<_> = tokens
+            .iter()
+            .filter(|token| token.kind == TokenKind::Identifier)
+            .collect();
+
+        assert_eq!(identifiers.len(), 4);
+        assert_eq!(identifiers[0].span.line, 1);
+        assert_eq!(identifiers[1].span.line, 2);
+        assert_eq!(identifiers[2].span.line, 3);
+        assert_eq!(identifiers[3].span.line, 4);
+        assert_eq!(
+            tokens
+                .iter()
+                .filter(|token| token.kind == TokenKind::Newline)
+                .count(),
+            4
+        );
+    }
+
+    #[test]
+    fn accepts_tabs_between_tokens_but_rejects_them_in_indentation() {
+        let tokens = tokenize("let\tvalue = 1").unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::Let);
+        assert_eq!(tokens[1].kind, TokenKind::Identifier);
+
+        let error = tokenize("if true:\n\treturn\n").unwrap_err();
+        assert!(error.message.contains("tabs"));
+        assert_eq!(error.span.start, 9);
+        assert_eq!(error.span.end, 10);
+        assert_eq!(error.span.line, 2);
+        assert_eq!(error.span.column, 1);
+        assert_eq!(error.span.end_column, 2);
+    }
+
+    #[test]
+    fn empty_source_produces_only_an_eof_token() {
+        let tokens = tokenize("").unwrap();
+
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].kind, TokenKind::Eof);
+        assert_eq!(tokens[0].span.start, 0);
+        assert_eq!(tokens[0].span.end, 0);
+        assert_eq!(tokens[0].span.line, 1);
+        assert_eq!(tokens[0].span.column, 1);
+    }
+
+    #[test]
+    fn emits_only_one_logical_newline_for_final_line_and_blank_tail() {
+        for source in ["value", "value\n", "value\n\n\n"] {
+            let tokens = tokenize(source).unwrap();
+            assert_eq!(
+                tokens
+                    .iter()
+                    .filter(|token| token.kind == TokenKind::Newline)
+                    .count(),
+                1,
+                "source: {source:?}"
+            );
+            assert_eq!(tokens.last().unwrap().kind, TokenKind::Eof);
+        }
     }
 }
