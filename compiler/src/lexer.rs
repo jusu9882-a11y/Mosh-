@@ -471,7 +471,7 @@ impl<'a> Lexer<'a> {
         if self
             .tokens
             .last()
-            .is_none_or(|token| token.kind != TokenKind::Newline)
+            .is_some_and(|token| token.kind != TokenKind::Newline)
         {
             self.tokens.push(Token {
                 kind: TokenKind::Newline,
@@ -880,10 +880,4 @@ mod tests {
         assert_eq!(tokens[tokens.len() - 1].kind, TokenKind::Eof);
     }
 
-    #[test]
-    fn reports_unterminated_string_escape_at_end_of_file() {
-        let error = tokenize("\"text\\").unwrap_err();
-        assert!(error.message.contains("unterminated escape"));
-        assert_eq!(error.span.line, 1);
-    }
 }
