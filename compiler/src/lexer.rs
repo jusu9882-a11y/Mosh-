@@ -137,10 +137,10 @@ impl<'a> Lexer<'a> {
             }
 
             match self.peek() {
-                Some(b' ' | b'\\t') => self.bump(),
+                Some(b' ' | b'\t') => self.bump(),
                 Some(b'#') => self.skip_comment(),
-                Some(b'\\n' | b'\\r') => self.consume_newline(),
-                Some(b'"') | Some(b'\\'') => self.scan_string()?,
+                Some(b'\n' | b'\r') => self.consume_newline(),
+                Some(b'"') | Some(b'\'') => self.scan_string()?,
                 Some(b'0'..=b'9') => self.scan_number()?,
                 Some(b'a'..=b'z' | b'A'..=b'Z' | b'_') => self.scan_identifier(),
                 Some(_) => self.scan_operator_or_punctuation()?,
@@ -190,7 +190,7 @@ impl<'a> Lexer<'a> {
                     width += 1;
                     self.bump();
                 }
-                b'\\t' => {
+                b'\t' => {
                     return Err(LexError {
                         message: "tabs are not allowed in indentation; use spaces".into(),
                         span: self.span_with_width(1),
@@ -201,7 +201,7 @@ impl<'a> Lexer<'a> {
         }
 
         // Blank and comment-only lines do not affect the indentation stack.
-        if matches!(self.peek(), None | Some(b'\\n' | b'\\r')) {
+        if matches!(self.peek(), None | Some(b'\n' | b'\r')) {
             if self.peek().is_some() {
                 self.consume_newline();
             }
@@ -327,7 +327,7 @@ impl<'a> Lexer<'a> {
 
         loop {
             match self.peek() {
-                None | Some(b'\\n' | b'\\r') => {
+                None | Some(b'\n' | b'\r') => {
                     return Err(LexError {
                         message: "unterminated string literal".into(),
                         span: self.span_from(start),
@@ -338,11 +338,11 @@ impl<'a> Lexer<'a> {
                     self.push(TokenKind::String, start);
                     return Ok(());
                 }
-                Some(b'\\\\') => {
+                Some(b'\\') => {
                     let escape_start = self.point_span();
                     self.bump();
                     match self.peek() {
-                        Some(b'n' | b'r' | b't' | b'0' | b'\\\\' | b'"' | b'\\'') => {
+                        Some(b'n' | b'r' | b't' | b'0' | b'\\' | b'"' | b'\'') => {
                             self.bump();
                         }
                         Some(_) => {
@@ -446,19 +446,19 @@ impl<'a> Lexer<'a> {
     }
 
     fn skip_comment(&mut self) {
-        while !matches!(self.peek(), None | Some(b'\\n' | b'\\r')) {
+        while !matches!(self.peek(), None | Some(b'\n' | b'\r')) {
             self.bump();
         }
     }
 
     fn consume_newline(&mut self) {
         let start = self.point_span();
-        if self.peek() == Some(b'\\r') {
+        if self.peek() == Some(b'\r') {
             self.position += 1;
-            if self.peek() == Some(b'\\n') {
+            if self.peek() == Some(b'\n') {
                 self.position += 1;
             }
-        } else if self.peek() == Some(b'\\n') {
+        } else if self.peek() == Some(b'\n') {
             self.position += 1;
         }
 
