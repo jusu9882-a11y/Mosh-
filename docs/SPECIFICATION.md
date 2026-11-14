@@ -33,6 +33,17 @@ Mosh is not a Python wrapper, a database language, or a web framework.
 
 These decisions establish direction. Detailed semantics remain open until specified and tested.
 
+### 3.1 Source comments
+
+A line comment begins with `@` and continues to the end of that line. The lexer ignores comment text. The former `#` comment marker is not part of the Mosh 0.1 comment syntax.
+
+Examples:
+
+```mosh
+@ A full-line comment
+let count: Int = 3 @ A trailing comment
+```
+
 ## 3. Design principles
 
 1. **Readable syntax:** common programs SHOULD be concise and easy to understand.
