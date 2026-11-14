@@ -77,11 +77,9 @@ The following rules are normative for the initial language and MUST NOT be chang
 5. A `for` iterable is evaluated before the loop variable is introduced. The loop variable and declarations in the loop body are visible only within the loop body scope.
 6. A name MAY be shadowed in a nested scope. A duplicate declaration in the same scope MUST be rejected.
 7. Undefined names and calls to undefined functions MUST be rejected with source locations.
-8. `return` MUST appear inside a function.
-9. Bindings declared with `let` (or a typed declaration without `let`) are immutable. Bindings declared with `mut` are mutable. Assignment to an immutable binding MUST be rejected.
-10. The initial compiler recognizes `print` as a built-in output function. This does not imply that a complete standard library or general built-in namespace exists.
+These seven rules are the approved, fixed scope and name-resolution contract. They define name resolution only; they do not constitute type checking, ownership checking, borrow checking, or a complete function-call type system.
 
-These rules define name resolution and basic declaration semantics only. They do not constitute type checking, ownership checking, borrow checking, or a complete function-call type system.
+The first analyzer also currently checks that `return` appears inside a function and that assignments respect the `let`/`mut` declaration flag. These are initial implementation checks, not additional rules approved in the scope decision above. The initial implementation recognizes `print` as a built-in output function; the final built-in and standard-library model remains open.
 
 ## 5. Type system
 
