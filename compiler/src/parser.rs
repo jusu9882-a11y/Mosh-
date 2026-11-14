@@ -417,4 +417,76 @@ mod tests {
         let e = parsed("let x = )\n").unwrap_err();
         assert_eq!(e.span.line, 1);
     }
+
+    #[test]
+    fn parses_chained_calls_members_and_indexes() {
+        let p = parsed("let result = factory().items[0].name\\n").unwrap();
+        assert!(matches!(
+            &p.statements[0],
+            Stmt::Let {
+                value: Some(Expr::Member { object, name, .. }),
+                ..
+            } if name == "name"
+                && matches!(object.as_ref(), Expr::Index { .. })
+        ));
+    }
+
+    #[test]
+    fn parses_subtraction_as_left_associative() {
+        let p = parsed("let value = 10 - 3 - 2\\n").unwrap();
+        assert!(matches!(
+            &p.statements[0],
+            Stmt::Let {
+                value: Some(Expr::Binary { left, operator: crate::lexer::TokenKind::Minus, .. }),
+                ..
+            } if matches!(left.as_ref(), Expr::Binary {
+                operator: crate::lexer::TokenKind::Minus, ..
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_assignment_to_indexed_member() {
+        let p = parsed("items[0].value = 7\\n").unwrap();
+        assert!(matches!(
+            &p.statements[0],
+            Stmt::Assign {
+                target: Expr::Member { object, name, .. },
+                value: Expr::Integer { value, .. },
+                ..
+            } if name == "value"
+                && value == "7"
+                && matches!(object.as_ref(), Expr::Index { .. })
+        ));
+    }
+
+    #[test]
+    fn parses_bare_return_inside_function() {
+        let p = parsed("function stop():\\n    return\\n").unwrap();
+        assert!(matches!(
+            &p.statements[0],
+            Stmt::Function { body, .. }
+                if matches!(&body[0], Stmt::Return { value: None, .. })
+        ));
+    }
+
+    #[test]
+    fn accepts_an_empty_program() {
+        let p = parsed("").unwrap();
+        assert!(p.statements.is_empty());
+    }
+
+    #[test]
+    fn rejects_a_missing_right_hand_expression() {
+        let error = parsed("let total = 1 +\\n").unwrap_err();
+        assert!(error.message.contains("expected expression"));
+        assert_eq!(error.span.line, 1);
+    }
+
+    #[test]
+    fn rejects_two_statements_on_one_line_without_a_separator() {
+        let error = parsed("let first = 1 let second = 2\\n").unwrap_err();
+        assert!(error.message.contains("end of statement"));
+    }
+
 }
