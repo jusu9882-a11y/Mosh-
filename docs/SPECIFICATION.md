@@ -83,6 +83,26 @@ The first analyzer also currently checks that `return` appears inside a function
 
 ## 5. Type system
 
+### 5.1 Fixed initial type-system contract (version 0.1)
+
+The following rules are approved and fixed for the initial primitive type checker:
+
+1. The initial primitive types are `Int`, `Float`, `Bool`, `String`, and `Unit`.
+2. A local binding with an initializer MAY omit its type annotation; the compiler infers its type from that initializer.
+3. An explicit variable type annotation MUST match the initializer's type exactly.
+4. Function parameter types MUST be explicit.
+5. A function without an explicit return type has return type `Unit`. A value-returning function MUST declare its return type.
+6. Assignment MUST preserve the declared/inferred type of the binding.
+7. Conditions in `if` and `while` MUST have type `Bool`.
+8. Implicit conversions are not allowed. In particular, `Int` and `Float` do not convert silently to one another.
+9. Arithmetic operators `+`, `-`, `*`, `/`, and `%` require two operands of the same numeric type (`Int` or `Float`) and produce that type.
+10. Relational comparisons require matching numeric operands and produce `Bool`. Equality/inequality require matching non-`Unit` operand types and produce `Bool`.
+11. Bitwise operators `&`, `|`, and `^` require `Int` operands and produce `Int`.
+12. Unary `-` accepts numeric operands; unary `!` accepts `Bool`.
+13. Type errors MUST report the expected and actual types where applicable, together with a source location.
+
+The initial checker recognizes `print` as a provisional polymorphic built-in that accepts values and returns `Unit`; this does not finalize the standard-library design. Iterable/collection typing, member access, indexing, pointers, structures, enumerations, generics, and ownership/borrow checking are outside this primitive-type milestone. The exact width and signedness of `Int`, and the representation/precision of `Float`, remain open decisions.
+
 Mosh uses static typing. The compiler MAY infer a type when it can do so unambiguously.
 
 Proposed initial primitive types:
@@ -218,4 +238,4 @@ The following must be resolved before the language can be considered fully speci
 
 ## 13. Implementation status
 
-This document is a design draft. The lexer, parser, and initial semantic name/scope checks are implemented with tests. Static type checking, ownership and borrow checking, runtime, LLVM backend, standard library, and native executable generation are not yet implemented.
+This document is a design draft. The lexer, parser, initial semantic name/scope checks, and first primitive static type checker are implemented with tests. The type checker currently covers the fixed version 0.1 primitive contract; iterable/compound types, ownership and borrow checking, runtime, LLVM backend, standard library, and native executable generation are not yet implemented.
