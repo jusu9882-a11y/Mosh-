@@ -654,7 +654,7 @@ mod tests {
 
     #[test]
     fn reports_unknown_characters_with_source_position() {
-        let error = tokenize("let x = @").unwrap_err();
+        let error = tokenize("let x = #").unwrap_err();
         assert_eq!(error.span.line, 1);
         assert_eq!(error.span.column, 9);
     }
