@@ -1,5 +1,6 @@
 mod lexer;
 mod parser;
+mod semantic;
 
 use std::env;
 use std::fs;
@@ -16,8 +17,10 @@ fn print_help() {
     println!("    moshc --version");
     println!("    moshc lex <source.mosh>");
     println!("    moshc parse <source.mosh>");
+    println!("    moshc check <source.mosh>");
     println!();
     println!("The lex and parse commands are development tools.");
+    println!("The check command runs parsing and initial semantic analysis.");
 }
 
 fn read_source(path: &str) -> Result<String, ExitCode> {
@@ -65,6 +68,26 @@ fn run_parser(path: &str) -> ExitCode {
     }
 }
 
+
+fn run_checker(path: &str) -> ExitCode {
+    let source = match read_source(path) { Ok(s) => s, Err(code) => return code };
+    let tokens = match lexer::tokenize(&source) {
+        Ok(tokens) => tokens,
+        Err(error) => { eprintln!("moshc: {path}: {error}"); return ExitCode::from(1); }
+    };
+    let program = match parser::parse(&tokens) {
+        Ok(program) => program,
+        Err(error) => { eprintln!("moshc: {path}: {error}"); return ExitCode::from(1); }
+    };
+    match semantic::analyze(&program) {
+        Ok(()) => { println!("{path}: semantic checks passed"); ExitCode::SUCCESS }
+        Err(errors) => {
+            for error in errors { eprintln!("moshc: {path}: {error}"); }
+            ExitCode::from(1)
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
@@ -77,6 +100,10 @@ fn main() -> ExitCode {
         Some("parse") => match args.next() {
             Some(path) => run_parser(&path),
             None => { eprintln!("moshc: 'parse' requires a source file path"); ExitCode::from(2) }
+        },
+        Some("check") => match args.next() {
+            Some(path) => run_checker(&path),
+            None => { eprintln!("moshc: 'check' requires a source file path"); ExitCode::from(2) }
         },
         Some(other) => {
             eprintln!("moshc: unsupported command or argument: {other}");
