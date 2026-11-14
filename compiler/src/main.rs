@@ -1,6 +1,7 @@
 mod lexer;
 mod parser;
 mod semantic;
+mod typecheck;
 
 use std::env;
 use std::fs;
@@ -20,7 +21,7 @@ fn print_help() {
     println!("    moshc check <source.mosh>");
     println!();
     println!("The lex and parse commands are development tools.");
-    println!("The check command runs parsing and initial semantic analysis.");
+    println!("The check command runs parsing, name resolution, and static type checking.");
 }
 
 fn read_source(path: &str) -> Result<String, ExitCode> {
@@ -79,8 +80,12 @@ fn run_checker(path: &str) -> ExitCode {
         Ok(program) => program,
         Err(error) => { eprintln!("moshc: {path}: {error}"); return ExitCode::from(1); }
     };
-    match semantic::analyze(&program) {
-        Ok(()) => { println!("{path}: semantic checks passed"); ExitCode::SUCCESS }
+    if let Err(errors) = semantic::analyze(&program) {
+        for error in errors { eprintln!("moshc: {path}: {error}"); }
+        return ExitCode::from(1);
+    }
+    match typecheck::check(&program) {
+        Ok(()) => { println!("{path}: semantic and type checks passed"); ExitCode::SUCCESS }
         Err(errors) => {
             for error in errors { eprintln!("moshc: {path}: {error}"); }
             ExitCode::from(1)
