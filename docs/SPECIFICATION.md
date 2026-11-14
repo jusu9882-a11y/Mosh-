@@ -1,7 +1,7 @@
 # MOSH Language Specification
 
 - **Version:** 0.1 (initial draft)
-- **Status:** Design baseline; not a stable language contract
+- **Status:** Design baseline; initial name-resolution and scope rules in §4.1 are fixed
 - **Category:** General-purpose compiled programming language
 
 The words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** describe intended requirements at this draft stage. A requirement is not implemented merely because it appears here.
@@ -64,6 +64,24 @@ The intended compiler pipeline is:
 12. Linking into an executable or library.
 
 The compiler is implemented in Rust. LLVM is the initial backend, not the definition of Mosh's language semantics or runtime.
+
+
+### 4.1 Fixed initial name-resolution and scope rules
+
+The following rules are normative for the initial language and MUST NOT be changed implicitly:
+
+1. A module has a global scope. Top-level function names are registered before function bodies are analyzed. A function MAY be called before its textual definition, and functions MAY call each other recursively.
+2. A variable MUST be declared before it is used. An initializer is analyzed before the newly declared variable enters scope, so a declaration cannot refer to itself through its own name.
+3. Function parameters are local to that function. A function body has its own scope.
+4. Each `if`, `else`, and `while` body introduces a nested block scope. Names declared in that block are not visible after the block ends.
+5. A `for` iterable is evaluated before the loop variable is introduced. The loop variable and declarations in the loop body are visible only within the loop body scope.
+6. A name MAY be shadowed in a nested scope. A duplicate declaration in the same scope MUST be rejected.
+7. Undefined names and calls to undefined functions MUST be rejected with source locations.
+8. `return` MUST appear inside a function.
+9. Bindings declared with `let` (or a typed declaration without `let`) are immutable. Bindings declared with `mut` are mutable. Assignment to an immutable binding MUST be rejected.
+10. The initial compiler recognizes `print` as a built-in output function. This does not imply that a complete standard library or general built-in namespace exists.
+
+These rules define name resolution and basic declaration semantics only. They do not constitute type checking, ownership checking, borrow checking, or a complete function-call type system.
 
 ## 5. Type system
 
@@ -202,4 +220,4 @@ The following must be resolved before the language can be considered fully speci
 
 ## 13. Implementation status
 
-This document is a design draft. It does not imply that a Mosh compiler, borrow checker, runtime, LLVM backend, standard library, or executable format has been implemented.
+This document is a design draft. The lexer, parser, and initial semantic name/scope checks are implemented with tests. Static type checking, ownership and borrow checking, runtime, LLVM backend, standard library, and native executable generation are not yet implemented.
