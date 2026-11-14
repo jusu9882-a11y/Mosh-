@@ -135,11 +135,12 @@ impl Checker {
     }
 
     fn define(&mut self, name: &str, variable: Variable, span: Span) {
-        let scope = self.scopes.last_mut().expect("checker always has a scope");
-        if scope.variables.contains_key(name) {
+        let duplicate = self.scopes.last().expect("checker always has a scope").variables.contains_key(name);
+        if duplicate {
             self.error(format!("duplicate typed binding '{name}'"), span);
         } else {
-            scope.variables.insert(name.to_owned(), variable);
+            self.scopes.last_mut().expect("checker always has a scope")
+                .variables.insert(name.to_owned(), variable);
         }
     }
 
