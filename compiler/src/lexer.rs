@@ -138,7 +138,7 @@ impl<'a> Lexer<'a> {
 
             match self.peek() {
                 Some(b' ' | b'\t') => self.bump(),
-                Some(b'#') => self.skip_comment(),
+                Some(b'@') => self.skip_comment(),
                 Some(b'\n' | b'\r') => self.consume_newline(),
                 Some(b'"') | Some(b'\'') => self.scan_string()?,
                 Some(b'0'..=b'9') => self.scan_number()?,
@@ -206,7 +206,7 @@ impl<'a> Lexer<'a> {
             }
             return Ok(());
         }
-        if self.peek() == Some(b'#') {
+        if self.peek() == Some(b'@') {
             self.skip_comment();
             if self.peek().is_some() {
                 self.consume_newline();
@@ -616,7 +616,7 @@ mod tests {
 
     #[test]
     fn ignores_blank_and_comment_only_lines() {
-        let tokens = tokenize("# heading\n\nlet value = 1 # trailing\n").unwrap();
+        let tokens = tokenize("@ heading\n\nlet value = 1 @ trailing\n").unwrap();
         assert_eq!(
             tokens
                 .iter()
@@ -789,14 +789,14 @@ mod tests {
     }
 
     #[test]
-    fn preserves_unicode_string_lexemes_and_hash_characters() {
-        let tokens = tokenize("let text = \"héllo # mosh\" # trailing comment\n").unwrap();
+    fn preserves_unicode_string_lexemes_and_at_characters() {
+        let tokens = tokenize("let text = \"héllo @ mosh\" @ trailing comment\n").unwrap();
         let string = tokens
             .iter()
             .find(|token| token.kind == TokenKind::String)
             .unwrap();
 
-        assert_eq!(string.lexeme, "\"héllo # mosh\"");
+        assert_eq!(string.lexeme, "\"héllo @ mosh\"");
         assert_eq!(string.span.start, 11);
         assert_eq!(string.span.end, 26);
         assert_eq!(string.span.line, 1);
