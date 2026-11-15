@@ -307,7 +307,6 @@ pub fn validate(module: &MirModule) -> Result<(), Vec<LowerError>> {
     }
 }
 
-
 /// Check SSA-style value availability across instructions and control-flow edges.
 fn validate_value_dominance(function: &MirFunction, errors: &mut Vec<LowerError>) {
     use std::collections::{HashMap, HashSet, VecDeque};
@@ -419,29 +418,27 @@ fn validate_value_dominance(function: &MirFunction, errors: &mut Vec<LowerError>
         }
     }
 
-    let mut check_use =
-        |value: ValueId, use_block: usize, use_position: usize, span: Span| {
-            let Some((definition_block, definition_position)) = definitions.get(&value).copied()
-            else {
-                return;
-            };
-            let valid = if definition_block == use_block {
-                definition_position < use_position
-            } else if reachable[use_block] {
-                reachable[definition_block] && dominators[use_block].contains(&definition_block)
-            } else {
-                false
-            };
-            if !valid {
-                errors.push(LowerError {
-                    message: format!(
-                        "MIR function '{}' uses value {} before its definition or outside its defining block's dominance",
-                        function.name, value.0
-                    ),
-                    span,
-                });
-            }
+    let mut check_use = |value: ValueId, use_block: usize, use_position: usize, span: Span| {
+        let Some((definition_block, definition_position)) = definitions.get(&value).copied() else {
+            return;
         };
+        let valid = if definition_block == use_block {
+            definition_position < use_position
+        } else if reachable[use_block] {
+            reachable[definition_block] && dominators[use_block].contains(&definition_block)
+        } else {
+            false
+        };
+        if !valid {
+            errors.push(LowerError {
+                message: format!(
+                    "MIR function '{}' uses value {} before its definition or outside its defining block's dominance",
+                    function.name, value.0
+                ),
+                span,
+            });
+        }
+    };
 
     for (block_index, block) in function.blocks.iter().enumerate() {
         for (instruction_index, instruction) in block.instructions.iter().enumerate() {
@@ -1084,7 +1081,8 @@ mod tests {
     fn validator_rejects_branch_local_value_used_after_merge() {
         let mut module = compile(
             "function main(flag: Bool) -> Int:\n    if flag:\n        let x = 1\n    return 2\n",
-        ).unwrap();
+        )
+        .unwrap();
         let merge = module.functions[0].blocks.last_mut().unwrap();
         let returned = merge.instructions.last().unwrap().result.unwrap();
         let new_value = super::ValueId(3);
