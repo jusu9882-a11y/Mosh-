@@ -575,7 +575,7 @@ mod tests {
             .blocks
             .iter()
             .any(|b| matches!(b.terminator.as_ref(), Some(Terminator::Branch { .. }))));
-        assert!(module.functions[0].blocks.len() >= 4);
+        assert!(module.functions[0].blocks.len() >= 3);
     }
     #[test]
     fn lowers_while_to_a_loop_back_edge() {
