@@ -726,7 +726,7 @@ mod tests {
 
     #[test]
     fn recovering_parser_reports_multiple_independent_errors_and_keeps_valid_statements() {
-        let tokens = tokenize("let first = )\\nlet valid = 2\\nlet second = ]\\nlet last = 4\\n")
+        let tokens = tokenize("let first = )\nlet valid = 2\nlet second = ]\nlet last = 4\n")
             .expect("source should tokenize");
         let output = super::parse_recovering(&tokens).expect("token stream should be valid");
 
@@ -740,7 +740,7 @@ mod tests {
 
     #[test]
     fn recovering_parser_collects_errors_inside_blocks_and_continues_after_them() {
-        let source = "function main():\\n    let broken = )\\n    let good = 1\\n    let also_broken = ]\\n    return good\\nlet outside = 3\\n";
+        let source = "function main():\n    let broken = )\n    let good = 1\n    let also_broken = ]\n    return good\nlet outside = 3\n";
         let tokens = tokenize(source).expect("source should tokenize");
         let output = super::parse_recovering(&tokens).expect("token stream should be valid");
 
@@ -761,7 +761,7 @@ mod tests {
 
     #[test]
     fn strict_parser_still_returns_the_first_recovered_syntax_error() {
-        let error = parsed("let broken = )\\nlet also_broken = ]\\n").unwrap_err();
+        let error = parsed("let broken = )\nlet also_broken = ]\n").unwrap_err();
         assert_eq!(error.span.line, 1);
     }
 
