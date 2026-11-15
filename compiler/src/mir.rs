@@ -104,6 +104,161 @@ impl fmt::Display for LowerError {
 }
 impl std::error::Error for LowerError {}
 
+fn validation_span() -> Span {
+    Span {
+        start: 0,
+        end: 0,
+        line: 1,
+        column: 1,
+        end_line: 1,
+        end_column: 1,
+    }
+}
+
+/// Validate the structural invariants required before MIR can be consumed.
+pub fn validate(module: &MirModule) -> Result<(), Vec<LowerError>> {
+    let mut errors = Vec::new();
+    for function in &module.functions {
+        if function.blocks.is_empty() {
+            errors.push(LowerError {
+                message: format!("MIR function '{}' has no entry block", function.name),
+                span: validation_span(),
+            });
+            continue;
+        }
+
+        let mut definitions = std::collections::HashSet::new();
+        let mut uses = Vec::new();
+        for (index, block) in function.blocks.iter().enumerate() {
+            if block.id.0 as usize != index {
+                errors.push(LowerError {
+                    message: format!(
+                        "MIR function '{}' has invalid block ID {} at position {}",
+                        function.name, block.id.0, index
+                    ),
+                    span: block.instructions.first().map(|i| i.span).unwrap_or_else(validation_span),
+                });
+            }
+            if block.terminator.is_none() {
+                errors.push(LowerError {
+                    message: format!(
+                        "MIR function '{}' block {} has no terminator",
+                        function.name, block.id.0
+                    ),
+                    span: block.instructions.last().map(|i| i.span).unwrap_or_else(validation_span),
+                });
+            }
+
+            for instruction in &block.instructions {
+                let expects_result = !matches!(
+                    instruction.kind,
+                    InstructionKind::Declare { .. } | InstructionKind::Store { .. }
+                );
+                if instruction.result.is_some() != expects_result {
+                    errors.push(LowerError {
+                        message: format!(
+                            "MIR function '{}' block {} has an invalid result slot for an instruction",
+                            function.name, block.id.0
+                        ),
+                        span: instruction.span,
+                    });
+                }
+                if let Some(result) = instruction.result {
+                    if !definitions.insert(result) {
+                        errors.push(LowerError {
+                            message: format!(
+                                "MIR function '{}' defines value {} more than once",
+                                function.name, result.0
+                            ),
+                            span: instruction.span,
+                        });
+                    }
+                }
+                match &instruction.kind {
+                    InstructionKind::Declare { value, .. } => {
+                        uses.extend(value.iter().copied().map(|v| (v, instruction.span)));
+                    }
+                    InstructionKind::Store { value, .. } => uses.push((*value, instruction.span)),
+                    InstructionKind::Unary { operand, .. } => uses.push((*operand, instruction.span)),
+                    InstructionKind::Binary { left, right, .. } => {
+                        uses.push((*left, instruction.span));
+                        uses.push((*right, instruction.span));
+                    }
+                    InstructionKind::Call { arguments, .. } => {
+                        uses.extend(arguments.iter().copied().map(|v| (v, instruction.span)));
+                    }
+                    InstructionKind::Integer(_)
+                    | InstructionKind::Float(_)
+                    | InstructionKind::String(_)
+                    | InstructionKind::Boolean(_)
+                    | InstructionKind::Load { .. } => {}
+                }
+            }
+
+            if let Some(terminator) = &block.terminator {
+                match terminator {
+                    Terminator::Jump(target) => {
+                        if target.0 as usize >= function.blocks.len() {
+                            errors.push(LowerError {
+                                message: format!(
+                                    "MIR function '{}' block {} jumps to missing block {}",
+                                    function.name, block.id.0, target.0
+                                ),
+                                span: block.instructions.last().map(|i| i.span).unwrap_or_else(validation_span),
+                            });
+                        }
+                    }
+                    Terminator::Branch { condition, then_block, else_block } => {
+                        uses.push((*condition, block.instructions.last().map(|i| i.span).unwrap_or_else(validation_span)));
+                        for target in [then_block, else_block] {
+                            if target.0 as usize >= function.blocks.len() {
+                                errors.push(LowerError {
+                                    message: format!(
+                                        "MIR function '{}' block {} branches to missing block {}",
+                                        function.name, block.id.0, target.0
+                                    ),
+                                    span: block.instructions.last().map(|i| i.span).unwrap_or_else(validation_span),
+                                });
+                            }
+                        }
+                    }
+                    Terminator::Return(value) => {
+                        let valid = match (function.return_type, value) {
+                            (MirType::Unit, None) => true,
+                            (MirType::Unit, Some(_)) | (_, None) => false,
+                            (_, Some(_)) => true,
+                        };
+                        if !valid {
+                            errors.push(LowerError {
+                                message: format!(
+                                    "MIR function '{}' has a return value inconsistent with its declared return type",
+                                    function.name
+                                ),
+                                span: block.instructions.last().map(|i| i.span).unwrap_or_else(validation_span),
+                            });
+                        }
+                        uses.extend(value.iter().copied().map(|v| (v, block.instructions.last().map(|i| i.span).unwrap_or_else(validation_span))));
+                    }
+                }
+            }
+        }
+
+        for (value, span) in uses {
+            if !definitions.contains(&value) {
+                errors.push(LowerError {
+                    message: format!(
+                        "MIR function '{}' uses undefined value {}",
+                        function.name, value.0
+                    ),
+                    span,
+                });
+            }
+        }
+    }
+
+    if errors.is_empty() { Ok(()) } else { Err(errors) }
+}
+
 fn type_from_name(name: &str) -> Option<MirType> {
     match name {
         "Int" => Some(MirType::Int),
@@ -180,6 +335,7 @@ pub fn lower(program: &Program) -> Result<MirModule, Vec<LowerError>> {
         }
     }
     if errors.is_empty() {
+        validate(&module)?;
         Ok(module)
     } else {
         Err(errors)
@@ -639,6 +795,39 @@ mod tests {
         assert!(errors.iter().any(|error| error
             .message
             .contains("can reach the end without returning a value")));
+    }
+
+
+    #[test]
+    fn validator_rejects_missing_terminators_and_invalid_targets() {
+        let mut module = compile("function main():\\n    print(1)\\n").unwrap();
+        module.functions[0].blocks[0].terminator = Some(Terminator::Jump(super::BlockId(99)));
+        let errors = super::validate(&module).unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains("missing block 99")));
+
+        module.functions[0].blocks[0].terminator = None;
+        let errors = super::validate(&module).unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains("has no terminator")));
+    }
+
+    #[test]
+    fn validator_rejects_undefined_values_and_inconsistent_returns() {
+        let mut module = compile("function main() -> Int:\\n    return 1\\n").unwrap();
+        module.functions[0].blocks[0].terminator = Some(Terminator::Return(Some(super::ValueId(999))));
+        let errors = super::validate(&module).unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains("uses undefined value 999")));
+
+        module.functions[0].blocks[0].terminator = Some(Terminator::Return(None));
+        let errors = super::validate(&module).unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains("inconsistent with its declared return type")));
+    }
+
+    #[test]
+    fn validator_accepts_lowered_control_flow() {
+        let module = compile(
+            "function choose(flag: Bool) -> Int:\\n    if flag:\\n        return 1\\n    else:\\n        return 2\\n",
+        ).unwrap();
+        assert!(super::validate(&module).is_ok());
     }
 
     #[test]
