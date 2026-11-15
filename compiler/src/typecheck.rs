@@ -245,6 +245,12 @@ impl Checker {
                 for child in body {
                     self.statement(child);
                 }
+                if result != Type::Unit && !block_guarantees_return(body) {
+                    self.error(
+                        format!("function '{name}' may finish without returning {result}"),
+                        *span,
+                    );
+                }
                 self.return_types.pop();
                 self.pop_scope();
                 let _ = span;
@@ -592,6 +598,25 @@ impl Checker {
     }
 }
 
+// A non-Unit function must return on every statically guaranteed path.
+// Loops are deliberately not treated as guaranteed returns: even a
+// syntactically constant condition is not yet part of control-flow analysis.
+fn block_guarantees_return(statements: &[Stmt]) -> bool {
+    statements.iter().any(statement_guarantees_return)
+}
+
+fn statement_guarantees_return(statement: &Stmt) -> bool {
+    match statement {
+        Stmt::Return { .. } => true,
+        Stmt::If {
+            then_body,
+            else_body: Some(else_body),
+            ..
+        } => block_guarantees_return(then_body) && block_guarantees_return(else_body),
+        _ => false,
+    }
+}
+
 fn expr_span(expression: &Expr) -> Span {
     match expression {
         Expr::Identifier { span, .. }
@@ -679,6 +704,36 @@ mod tests {
             .unwrap_err()
             .iter()
             .any(|e| e.message.contains("return type mismatch")));
+    }
+
+    #[test]
+    fn rejects_non_unit_functions_with_a_fallthrough_path() {
+        let errors = checked(
+            "function maybe(flag: Bool) -> Int:\n    if flag:\n        return 1\n",
+        )
+        .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("may finish without returning Int")));
+    }
+
+    #[test]
+    fn accepts_non_unit_functions_when_all_if_branches_return() {
+        assert!(checked(
+            "function choose(flag: Bool) -> Int:\n    if flag:\n        return 1\n    else:\n        return 2\n"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn does_not_assume_while_loop_returns() {
+        let errors = checked(
+            "function maybe() -> Int:\n    while true:\n        return 1\n",
+        )
+        .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("may finish without returning Int")));
     }
 
     #[test]
