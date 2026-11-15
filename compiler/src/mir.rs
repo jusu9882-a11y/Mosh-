@@ -1186,7 +1186,7 @@ mod tests {
 
     #[test]
     fn validator_rejects_stores_to_immutable_parameters() {
-        let mut module = compile("function main(value: Int) -> Unit:\n    return\n").unwrap();
+        let mut module = compile("function main(value: Int) -> Unit:\n    let x = 1\n    return\n").unwrap();
         let block = &mut module.functions[0].blocks[0];
         let span = block.instructions[0].span;
         block.instructions.push(super::Instruction {
