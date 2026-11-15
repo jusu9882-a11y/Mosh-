@@ -332,10 +332,11 @@ fn validate_value_dominance(function: &MirFunction, errors: &mut Vec<LowerError>
                     .or_insert((block_index, instruction_index));
             }
             if let InstructionKind::Declare { name, mutable, .. } = &instruction.kind {
-                bindings
-                    .entry(name.clone())
-                    .or_default()
-                    .push((block_index, Some(instruction_index), *mutable));
+                bindings.entry(name.clone()).or_default().push((
+                    block_index,
+                    Some(instruction_index),
+                    *mutable,
+                ));
             }
         }
     }
@@ -454,7 +455,10 @@ fn validate_value_dominance(function: &MirFunction, errors: &mut Vec<LowerError>
                         }
                     })
                     .max_by_key(|(definition_block, definition_position, _)| {
-                        (dominators[*definition_block].len(), definition_position.unwrap_or(0))
+                        (
+                            dominators[*definition_block].len(),
+                            definition_position.unwrap_or(0),
+                        )
                     })
             });
             match available {
@@ -1181,7 +1185,9 @@ mod tests {
             },
         );
         let errors = super::validate(&module).unwrap_err();
-        assert!(errors.iter().any(|error| error.message.contains("outside its scope")));
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("outside its scope")));
     }
 
     #[test]
@@ -1203,7 +1209,9 @@ mod tests {
             span,
         });
         let errors = super::validate(&module).unwrap_err();
-        assert!(errors.iter().any(|error| error.message.contains("stores to immutable")));
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("stores to immutable")));
     }
 
     #[test]
