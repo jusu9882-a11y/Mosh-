@@ -24,8 +24,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - name: Check lexer formatting
-        run: rustfmt --edition 2021 --check src/lexer.rs
+      - name: Check Rust formatting
+        run: rustfmt --edition 2021 --check src/lexer.rs src/parser.rs
       - name: Run tests
         run: cargo test --all-targets
       - name: Check compilation
