@@ -247,7 +247,7 @@ impl Checker {
             Expr::Float { .. } => Type::Float,
             Expr::String { .. } => Type::String,
             Expr::Boolean { .. } => Type::Bool,
-            Expr::Identifier { name, span } => match self.lookup(name) {
+            Expr::Identifier { name, .. } => match self.lookup(name) {
                 Some(variable) => variable.ty,
                 None => Type::Unknown,
             },
