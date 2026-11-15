@@ -877,4 +877,5 @@ mod tests {
         assert_eq!(tokens[tokens.len() - 2].kind, TokenKind::Newline);
         assert!(tokens[tokens.len() - 2].lexeme.is_empty());
         assert_eq!(tokens[tokens.len() - 1].kind, TokenKind::Eof);
-    }}
+     }
+}
