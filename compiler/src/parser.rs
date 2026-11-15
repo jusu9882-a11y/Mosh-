@@ -588,4 +588,115 @@ mod tests {
         assert!(error.message.contains("end of statement"));
     }
 
+
+    #[test]
+    fn parses_nested_control_flow_blocks() {
+        let source = "function main():\n    if true:\n        while false:\n            work()\n    else:\n        stop()\n";
+        let program = parsed(source).unwrap();
+        assert!(matches!(
+            &program.statements[0],
+            Stmt::Function { body, .. }
+                if matches!(
+                    &body[0],
+                    Stmt::If {
+                        then_body,
+                        else_body: Some(_),
+                        ..
+                    } if matches!(&then_body[0], Stmt::While { .. })
+                )
+        ));
+    }
+
+    #[test]
+    fn parses_boolean_comparison_and_arithmetic_precedence_tiers() {
+        let program = parsed("let result = 1 + 2 * 3 < 8 == true | false\n").unwrap();
+        assert!(matches!(
+            &program.statements[0],
+            Stmt::Let {
+                value: Some(Expr::Binary {
+                    operator: crate::lexer::TokenKind::Pipe,
+                    left,
+                    ..
+                }),
+                ..
+            } if matches!(
+                left.as_ref(),
+                Expr::Binary {
+                    operator: crate::lexer::TokenKind::Equal,
+                    left: comparison,
+                    ..
+                } if matches!(
+                    comparison.as_ref(),
+                    Expr::Binary {
+                        operator: crate::lexer::TokenKind::Less,
+                        left: arithmetic,
+                        ..
+                    } if matches!(
+                        arithmetic.as_ref(),
+                        Expr::Binary {
+                            operator: crate::lexer::TokenKind::Plus,
+                            right,
+                            ..
+                        } if matches!(
+                            right.as_ref(),
+                            Expr::Binary {
+                                operator: crate::lexer::TokenKind::Star,
+                                ..
+                            }
+                        )
+                    )
+                )
+            )
+        ));
+    }
+
+    #[test]
+    fn parses_parentheses_as_an_explicit_precedence_override() {
+        let program = parsed("let result = (1 + 2) * 3\n").unwrap();
+        assert!(matches!(
+            &program.statements[0],
+            Stmt::Let {
+                value: Some(Expr::Binary {
+                    operator: crate::lexer::TokenKind::Star,
+                    left,
+                    ..
+                }),
+                ..
+            } if matches!(
+                left.as_ref(),
+                Expr::Binary {
+                    operator: crate::lexer::TokenKind::Plus,
+                    ..
+                }
+            )
+        ));
+    }
+
+    #[test]
+    fn reports_precise_column_for_invalid_expression() {
+        let error = parsed("let value = )\n").unwrap_err();
+        assert_eq!(error.span.line, 1);
+        assert_eq!(error.span.column, 13);
+    }
+
+    #[test]
+    fn accepts_trailing_commas_in_calls_and_function_parameters() {
+        let program = parsed(
+            "function combine(left: Int, right: Int,):\n    return merge(left, right,)\n",
+        )
+        .unwrap();
+        assert!(matches!(
+            &program.statements[0],
+            Stmt::Function { params, body, .. }
+                if params.len() == 2
+                    && matches!(
+                        &body[0],
+                        Stmt::Return {
+                            value: Some(Expr::Call { arguments, .. }),
+                            ..
+                        } if arguments.len() == 2
+                    )
+        ));
+    }
+
 }
