@@ -11,6 +11,9 @@ permissions:
 jobs:
   format:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: compiler
     steps:
       - uses: actions/checkout@v4
         with:
@@ -19,6 +22,7 @@ jobs:
       - name: Format all Rust sources
         run: cargo fmt --all
       - name: Commit every formatting change
+        working-directory: .
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
