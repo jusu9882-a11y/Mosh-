@@ -621,7 +621,10 @@ mod tests {
         )
         .unwrap();
         let function = &module.functions[0];
-        assert!(function.blocks.iter().all(|block| block.terminator.is_some()));
+        assert!(function
+            .blocks
+            .iter()
+            .all(|block| block.terminator.is_some()));
         assert!(!function.blocks.iter().any(|block| block.instructions.iter().any(
             |instruction| matches!(&instruction.kind, InstructionKind::Call { name, .. } if name == "print")
         )));
