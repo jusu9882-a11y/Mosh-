@@ -133,7 +133,23 @@ impl fmt::Display for ParseError {
 }
 impl std::error::Error for ParseError {}
 
+pub struct ParseOutput {
+    pub program: Program,
+    pub errors: Vec<ParseError>,
+}
+
 pub fn parse(tokens: &[Token]) -> Result<Program, ParseError> {
+    let output = parse_recovering(tokens)?;
+    match output.errors.into_iter().next() {
+        Some(error) => Err(error),
+        None => Ok(output.program),
+    }
+}
+
+/// Parses as much of the program as possible and collects independent syntax errors.
+///
+/// The strict `parse` API remains available for callers that require an error-free AST.
+pub fn parse_recovering(tokens: &[Token]) -> Result<ParseOutput, ParseError> {
     let Some(last) = tokens.last() else {
         return Err(ParseError {
             message: "token stream is empty; expected EOF".into(),
@@ -165,30 +181,60 @@ pub fn parse(tokens: &[Token]) -> Result<Program, ParseError> {
         });
     }
 
-    Parser { tokens, current: 0 }.parse_program()
+    let mut parser = Parser {
+        tokens,
+        current: 0,
+        errors: Vec::new(),
+    };
+    let program = parser.parse_program();
+    Ok(ParseOutput {
+        program,
+        errors: parser.errors,
+    })
 }
 
 struct Parser<'a> {
     tokens: &'a [Token],
     current: usize,
+    errors: Vec<ParseError>,
 }
 
 impl<'a> Parser<'a> {
-    fn parse_program(mut self) -> Result<Program, ParseError> {
+    fn parse_program(&mut self) -> Program {
         let mut statements = Vec::new();
         self.skip_newlines();
         while !self.check(&TokenKind::Eof) {
             if self.check(&TokenKind::Indent) {
-                return Err(self.error("unexpected indentation at top level"));
+                self.errors
+                    .push(self.error("unexpected indentation at top level"));
+                self.advance();
+                self.synchronize_statement();
+                self.skip_newlines();
+                continue;
             }
             if self.check(&TokenKind::Dedent) {
-                return Err(self.error("unexpected dedentation"));
+                self.errors.push(self.error("unexpected dedentation"));
+                self.advance();
+                self.skip_newlines();
+                continue;
             }
-            statements.push(self.statement()?);
-            self.statement_end()?;
+
+            match self.statement() {
+                Ok(statement) => {
+                    statements.push(statement);
+                    if let Err(error) = self.statement_end() {
+                        self.errors.push(error);
+                        self.synchronize_statement();
+                    }
+                }
+                Err(error) => {
+                    self.errors.push(error);
+                    self.synchronize_statement();
+                }
+            }
             self.skip_newlines();
         }
-        Ok(Program { statements })
+        Program { statements }
     }
 
     fn statement(&mut self) -> Result<Stmt, ParseError> {
@@ -353,8 +399,19 @@ impl<'a> Parser<'a> {
         let mut body = Vec::new();
         self.skip_newlines();
         while !self.check(&TokenKind::Dedent) && !self.check(&TokenKind::Eof) {
-            body.push(self.statement()?);
-            self.statement_end()?;
+            match self.statement() {
+                Ok(statement) => {
+                    body.push(statement);
+                    if let Err(error) = self.statement_end() {
+                        self.errors.push(error);
+                        self.synchronize_statement();
+                    }
+                }
+                Err(error) => {
+                    self.errors.push(error);
+                    self.synchronize_statement();
+                }
+            }
             self.skip_newlines();
         }
         self.expect(TokenKind::Dedent, "expected end of indented block")?;
@@ -528,6 +585,44 @@ impl<'a> Parser<'a> {
     fn skip_newlines(&mut self) {
         while self.take(&TokenKind::Newline) {}
     }
+
+    /// Resume at the next logical statement boundary without consuming a block's
+    /// closing DEDENT or the program's EOF.
+    fn synchronize_statement(&mut self) {
+        if self.previous().kind == TokenKind::Newline {
+            return;
+        }
+
+        while !matches!(
+            self.kind(),
+            TokenKind::Newline | TokenKind::Dedent | TokenKind::Eof
+        ) {
+            self.advance();
+        }
+        self.take(&TokenKind::Newline);
+
+        // If a malformed compound statement left its indented body behind,
+        // discard that body as one balanced unit rather than misparsing it as
+        // statements belonging to the surrounding scope.
+        if self.take(&TokenKind::Indent) {
+            let mut depth = 1usize;
+            while depth > 0 && !self.check(&TokenKind::Eof) {
+                match self.kind() {
+                    TokenKind::Indent => {
+                        depth += 1;
+                        self.advance();
+                    }
+                    TokenKind::Dedent => {
+                        depth -= 1;
+                        self.advance();
+                    }
+                    _ => {
+                        self.advance();
+                    }
+                }
+            }
+        }
+    }
     fn identifier(&mut self, message: &str) -> Result<String, ParseError> {
         if self.check(&TokenKind::Identifier) {
             Ok(self.advance().lexeme.clone())
@@ -627,6 +722,47 @@ mod tests {
     fn parsed(source: &str) -> Result<super::Program, super::ParseError> {
         let tokens = tokenize(source).expect("source should tokenize");
         parse(&tokens)
+    }
+
+    #[test]
+    fn recovering_parser_reports_multiple_independent_errors_and_keeps_valid_statements() {
+        let tokens = tokenize("let first = )\\nlet valid = 2\\nlet second = ]\\nlet last = 4\\n")
+            .expect("source should tokenize");
+        let output = super::parse_recovering(&tokens).expect("token stream should be valid");
+
+        assert_eq!(output.errors.len(), 2);
+        assert_eq!(output.errors[0].span.line, 1);
+        assert_eq!(output.errors[1].span.line, 3);
+        assert_eq!(output.program.statements.len(), 2);
+        assert!(matches!(&output.program.statements[0], Stmt::Let { name, .. } if name == "valid"));
+        assert!(matches!(&output.program.statements[1], Stmt::Let { name, .. } if name == "last"));
+    }
+
+    #[test]
+    fn recovering_parser_collects_errors_inside_blocks_and_continues_after_them() {
+        let source = "function main():\\n    let broken = )\\n    let good = 1\\n    let also_broken = ]\\n    return good\\nlet outside = 3\\n";
+        let tokens = tokenize(source).expect("source should tokenize");
+        let output = super::parse_recovering(&tokens).expect("token stream should be valid");
+
+        assert_eq!(output.errors.len(), 2);
+        assert_eq!(output.errors[0].span.line, 2);
+        assert_eq!(output.errors[1].span.line, 4);
+        assert_eq!(output.program.statements.len(), 2);
+        match &output.program.statements[0] {
+            Stmt::Function { body, .. } => {
+                assert_eq!(body.len(), 2);
+                assert!(matches!(&body[0], Stmt::Let { name, .. } if name == "good"));
+                assert!(matches!(&body[1], Stmt::Return { .. }));
+            }
+            _ => panic!("expected function"),
+        }
+        assert!(matches!(&output.program.statements[1], Stmt::Let { name, .. } if name == "outside"));
+    }
+
+    #[test]
+    fn strict_parser_still_returns_the_first_recovered_syntax_error() {
+        let error = parsed("let broken = )\\nlet also_broken = ]\\n").unwrap_err();
+        assert_eq!(error.span.line, 1);
     }
 
     #[test]
