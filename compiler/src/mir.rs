@@ -145,7 +145,11 @@ pub fn validate(module: &MirModule) -> Result<(), Vec<LowerError>> {
                         "MIR function '{}' block {} has no terminator",
                         function.name, block.id.0
                     ),
-                    span: block.instructions.last().map(|i| i.span).unwrap_or_else(validation_span),
+                    span: block
+                        .instructions
+                        .last()
+                        .map(|i| i.span)
+                        .unwrap_or_else(validation_span),
                 });
             }
 
@@ -179,7 +183,9 @@ pub fn validate(module: &MirModule) -> Result<(), Vec<LowerError>> {
                         uses.extend(value.iter().copied().map(|v| (v, instruction.span)));
                     }
                     InstructionKind::Store { value, .. } => uses.push((*value, instruction.span)),
-                    InstructionKind::Unary { operand, .. } => uses.push((*operand, instruction.span)),
+                    InstructionKind::Unary { operand, .. } => {
+                        uses.push((*operand, instruction.span))
+                    }
                     InstructionKind::Binary { left, right, .. } => {
                         uses.push((*left, instruction.span));
                         uses.push((*right, instruction.span));
@@ -208,8 +214,19 @@ pub fn validate(module: &MirModule) -> Result<(), Vec<LowerError>> {
                             });
                         }
                     }
-                    Terminator::Branch { condition, then_block, else_block } => {
-                        uses.push((*condition, block.instructions.last().map(|i| i.span).unwrap_or_else(validation_span)));
+                    Terminator::Branch {
+                        condition,
+                        then_block,
+                        else_block,
+                    } => {
+                        uses.push((
+                            *condition,
+                            block
+                                .instructions
+                                .last()
+                                .map(|i| i.span)
+                                .unwrap_or_else(validation_span),
+                        ));
                         for target in [then_block, else_block] {
                             if target.0 as usize >= function.blocks.len() {
                                 errors.push(LowerError {
@@ -237,7 +254,16 @@ pub fn validate(module: &MirModule) -> Result<(), Vec<LowerError>> {
                                 span: block.instructions.last().map(|i| i.span).unwrap_or_else(validation_span),
                             });
                         }
-                        uses.extend(value.iter().copied().map(|v| (v, block.instructions.last().map(|i| i.span).unwrap_or_else(validation_span))));
+                        uses.extend(value.iter().copied().map(|v| {
+                            (
+                                v,
+                                block
+                                    .instructions
+                                    .last()
+                                    .map(|i| i.span)
+                                    .unwrap_or_else(validation_span),
+                            )
+                        }));
                     }
                 }
             }
@@ -256,7 +282,11 @@ pub fn validate(module: &MirModule) -> Result<(), Vec<LowerError>> {
         }
     }
 
-    if errors.is_empty() { Ok(()) } else { Err(errors) }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
 }
 
 fn type_from_name(name: &str) -> Option<MirType> {
@@ -803,23 +833,32 @@ mod tests {
         let mut module = compile("function main():\n    print(1)\n").unwrap();
         module.functions[0].blocks[0].terminator = Some(Terminator::Jump(super::BlockId(99)));
         let errors = super::validate(&module).unwrap_err();
-        assert!(errors.iter().any(|error| error.message.contains("missing block 99")));
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("missing block 99")));
 
         module.functions[0].blocks[0].terminator = None;
         let errors = super::validate(&module).unwrap_err();
-        assert!(errors.iter().any(|error| error.message.contains("has no terminator")));
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("has no terminator")));
     }
 
     #[test]
     fn validator_rejects_undefined_values_and_inconsistent_returns() {
         let mut module = compile("function main() -> Int:\n    return 1\n").unwrap();
-        module.functions[0].blocks[0].terminator = Some(Terminator::Return(Some(super::ValueId(999))));
+        module.functions[0].blocks[0].terminator =
+            Some(Terminator::Return(Some(super::ValueId(999))));
         let errors = super::validate(&module).unwrap_err();
-        assert!(errors.iter().any(|error| error.message.contains("uses undefined value 999")));
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("uses undefined value 999")));
 
         module.functions[0].blocks[0].terminator = Some(Terminator::Return(None));
         let errors = super::validate(&module).unwrap_err();
-        assert!(errors.iter().any(|error| error.message.contains("inconsistent with its declared return type")));
+        assert!(errors.iter().any(|error| error
+            .message
+            .contains("inconsistent with its declared return type")));
     }
 
     #[test]
