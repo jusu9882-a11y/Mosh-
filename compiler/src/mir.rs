@@ -1039,7 +1039,7 @@ mod tests {
 
     #[test]
     fn validator_rejects_same_block_use_before_definition() {
-        let mut module = compile("function main() -> Int:\\n    return 1 + 2\\n").unwrap();
+        let mut module = compile("function main() -> Int:\n    return 1 + 2\n").unwrap();
         module.functions[0].blocks[0].instructions.swap(0, 2);
         let errors = super::validate(&module).unwrap_err();
         assert!(errors.iter().any(|error| error.message.contains("before its definition")));
@@ -1048,7 +1048,7 @@ mod tests {
     #[test]
     fn validator_rejects_branch_local_value_used_after_merge() {
         let mut module = compile(
-            "function main(flag: Bool) -> Int:\\n    if flag:\\n        let x = 1\\n    return 2\\n",
+            "function main(flag: Bool) -> Int:\n    if flag:\n        let x = 1\n    return 2\n",
         ).unwrap();
         let merge = module.functions[0].blocks.last_mut().unwrap();
         let returned = merge.instructions.last().unwrap().result.unwrap();
@@ -1071,7 +1071,7 @@ mod tests {
     #[test]
     fn validator_accepts_loop_condition_used_in_dominated_body() {
         let mut module = compile(
-            "function main() -> Unit:\\n    while true:\\n        print(1)\\n",
+            "function main() -> Unit:\n    while true:\n        print(1)\n",
         ).unwrap();
         let condition = module.functions[0].blocks[1].instructions[0].result.unwrap();
         let body = &mut module.functions[0].blocks[2];
