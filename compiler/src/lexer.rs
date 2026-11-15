@@ -282,8 +282,7 @@ impl<'a> Lexer<'a> {
 
         let mut is_float = false;
         // A decimal point belongs to a float only when followed by a digit.
-        if self.peek() == Some(b'.') && self.peek_next().is_some_and(|byte| byte.is_ascii_digit())
-        {
+        if self.peek() == Some(b'.') && self.peek_next().is_some_and(|byte| byte.is_ascii_digit()) {
             is_float = true;
             self.bump();
             while matches!(self.peek(), Some(b'0'..=b'9')) {
@@ -730,9 +729,9 @@ mod tests {
                 .count(),
             2
         );
-        assert!(!tokens.iter().any(|token| {
-            matches!(token.kind, TokenKind::Indent | TokenKind::Dedent)
-        }));
+        assert!(!tokens
+            .iter()
+            .any(|token| { matches!(token.kind, TokenKind::Indent | TokenKind::Dedent) }));
     }
 
     #[test]
