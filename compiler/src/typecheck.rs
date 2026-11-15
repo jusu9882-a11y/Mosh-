@@ -708,10 +708,9 @@ mod tests {
 
     #[test]
     fn rejects_non_unit_functions_with_a_fallthrough_path() {
-        let errors = checked(
-            "function maybe(flag: Bool) -> Int:\n    if flag:\n        return 1\n",
-        )
-        .unwrap_err();
+        let errors =
+            checked("function maybe(flag: Bool) -> Int:\n    if flag:\n        return 1\n")
+                .unwrap_err();
         assert!(errors
             .iter()
             .any(|error| error.message.contains("may finish without returning Int")));
@@ -727,10 +726,8 @@ mod tests {
 
     #[test]
     fn does_not_assume_while_loop_returns() {
-        let errors = checked(
-            "function maybe() -> Int:\n    while true:\n        return 1\n",
-        )
-        .unwrap_err();
+        let errors =
+            checked("function maybe() -> Int:\n    while true:\n        return 1\n").unwrap_err();
         assert!(errors
             .iter()
             .any(|error| error.message.contains("may finish without returning Int")));
