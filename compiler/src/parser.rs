@@ -46,6 +46,37 @@ impl fmt::Display for ParseError {
 impl std::error::Error for ParseError {}
 
 pub fn parse(tokens: &[Token]) -> Result<Program, ParseError> {
+    let Some(last) = tokens.last() else {
+        return Err(ParseError {
+            message: "token stream is empty; expected EOF".into(),
+            span: Span {
+                start: 0,
+                end: 0,
+                line: 1,
+                column: 1,
+                end_line: 1,
+                end_column: 1,
+            },
+        });
+    };
+
+    if last.kind != TokenKind::Eof {
+        return Err(ParseError {
+            message: "token stream must end with EOF".into(),
+            span: last.span,
+        });
+    }
+
+    if let Some(eof) = tokens[..tokens.len() - 1]
+        .iter()
+        .find(|token| token.kind == TokenKind::Eof)
+    {
+        return Err(ParseError {
+            message: "unexpected token after EOF".into(),
+            span: eof.span,
+        });
+    }
+
     Parser { tokens, current: 0 }.parse_program()
 }
 
@@ -322,6 +353,74 @@ mod tests {
     fn parsed(source: &str) -> Result<super::Program, super::ParseError> {
         let tokens = tokenize(source).expect("source should tokenize");
         parse(&tokens)
+    }
+
+    #[test]
+    fn rejects_an_empty_token_stream_without_panicking() {
+        let error = parse(&[]).unwrap_err();
+        assert!(error.message.contains("token stream is empty"));
+        assert_eq!(error.span.line, 1);
+        assert_eq!(error.span.column, 1);
+    }
+
+    #[test]
+    fn rejects_a_token_stream_without_a_final_eof() {
+        let mut tokens = tokenize("let value = 1\\n").unwrap();
+        tokens.pop();
+        let error = parse(&tokens).unwrap_err();
+        assert!(error.message.contains("must end with EOF"));
+        assert_eq!(error.span.line, 2);
+    }
+
+    #[test]
+    fn rejects_tokens_after_an_embedded_eof() {
+        let mut tokens = tokenize("let value = 1\\n").unwrap();
+        let eof = tokens.pop().unwrap();
+        tokens.push(eof.clone());
+        tokens.push(eof);
+        let error = parse(&tokens).unwrap_err();
+        assert!(error.message.contains("after EOF"));
+    }
+
+    #[test]
+    fn rejects_malformed_declarations_and_function_signatures() {
+        for source in [
+            "let = 1\\n",
+            "let value =\\n",
+            "function add(value):\\n    return value\\n",
+            "function add(value: Int -> Int:\\n    return value\\n",
+        ] {
+            assert!(parsed(source).is_err(), "source should fail: {source:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_calls_indexes_and_member_access() {
+        for source in [
+            "call(1,,2)\\n",
+            "let value = items[]\\n",
+            "let value = item.\\n",
+            "let value = call(1\\n",
+            "let value = items[0\\n",
+        ] {
+            assert!(parsed(source).is_err(), "source should fail: {source:?}");
+        }
+    }
+
+    #[test]
+    fn reports_the_full_span_of_a_variable_declaration() {
+        let p = parsed("let value = 123\\n").unwrap();
+        match &p.statements[0] {
+            Stmt::Let { span, .. } => {
+                assert_eq!(span.start, 0);
+                assert_eq!(span.end, 15);
+                assert_eq!(span.line, 1);
+                assert_eq!(span.column, 1);
+                assert_eq!(span.end_line, 1);
+                assert_eq!(span.end_column, 16);
+            }
+            _ => panic!("expected variable declaration"),
+        }
     }
 
     #[test]
