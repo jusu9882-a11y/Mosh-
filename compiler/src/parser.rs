@@ -365,7 +365,7 @@ mod tests {
 
     #[test]
     fn rejects_a_token_stream_without_a_final_eof() {
-        let mut tokens = tokenize("let value = 1\\n").unwrap();
+        let mut tokens = tokenize("let value = 1\n").unwrap();
         tokens.pop();
         let error = parse(&tokens).unwrap_err();
         assert!(error.message.contains("must end with EOF"));
@@ -374,7 +374,7 @@ mod tests {
 
     #[test]
     fn rejects_tokens_after_an_embedded_eof() {
-        let mut tokens = tokenize("let value = 1\\n").unwrap();
+        let mut tokens = tokenize("let value = 1\n").unwrap();
         let eof = tokens.pop().unwrap();
         tokens.push(eof.clone());
         tokens.push(eof);
@@ -385,10 +385,10 @@ mod tests {
     #[test]
     fn rejects_malformed_declarations_and_function_signatures() {
         for source in [
-            "let = 1\\n",
-            "let value =\\n",
-            "function add(value):\\n    return value\\n",
-            "function add(value: Int -> Int:\\n    return value\\n",
+            "let = 1\n",
+            "let value =\n",
+            "function add(value):\n    return value\n",
+            "function add(value: Int -> Int:\n    return value\n",
         ] {
             assert!(parsed(source).is_err(), "source should fail: {source:?}");
         }
@@ -397,11 +397,11 @@ mod tests {
     #[test]
     fn rejects_malformed_calls_indexes_and_member_access() {
         for source in [
-            "call(1,,2)\\n",
-            "let value = items[]\\n",
-            "let value = item.\\n",
-            "let value = call(1\\n",
-            "let value = items[0\\n",
+            "call(1,,2)\n",
+            "let value = items[]\n",
+            "let value = item.\n",
+            "let value = call(1\n",
+            "let value = items[0\n",
         ] {
             assert!(parsed(source).is_err(), "source should fail: {source:?}");
         }
@@ -409,7 +409,7 @@ mod tests {
 
     #[test]
     fn reports_the_full_span_of_a_variable_declaration() {
-        let p = parsed("let value = 123\\n").unwrap();
+        let p = parsed("let value = 123\n").unwrap();
         match &p.statements[0] {
             Stmt::Let { span, .. } => {
                 assert_eq!(span.start, 0);
