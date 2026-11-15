@@ -138,7 +138,7 @@ impl<'a> Lexer<'a> {
 
             match self.peek() {
                 Some(b' ' | b'\t') => self.bump(),
-                Some(b'#') => self.skip_comment(),
+                Some(b'@') => self.skip_comment(),
                 Some(b'\n' | b'\r') => self.consume_newline(),
                 Some(b'"') | Some(b'\'') => self.scan_string()?,
                 Some(b'0'..=b'9') => self.scan_number()?,
@@ -207,7 +207,7 @@ impl<'a> Lexer<'a> {
             }
             return Ok(());
         }
-        if self.peek() == Some(b'#') {
+        if self.peek() == Some(b'@') {
             self.skip_comment();
             if self.peek().is_some() {
                 self.consume_newline();
@@ -719,7 +719,7 @@ mod tests {
     #[test]
     fn ignores_blank_and_comment_only_lines_and_recognizes_trailing_comments() {
         let tokens = tokenize(
-            "# heading\n\nlet value = 1 # trailing\n  # indented comment\n\nlet next = 2\n",
+            "@ heading\n\nlet value = 1 @ trailing\n  @ indented comment\n\nlet next = 2\n",
         )
         .unwrap();
 
@@ -802,7 +802,7 @@ mod tests {
 
     #[test]
     fn reports_unknown_ascii_and_unicode_characters_with_full_spans() {
-        let ascii_error = tokenize("let x = @").unwrap_err();
+        let ascii_error = tokenize("let x = #").unwrap_err();
         assert_eq!(ascii_error.span.line, 1);
         assert_eq!(ascii_error.span.column, 9);
         assert_eq!(ascii_error.span.end_column, 10);

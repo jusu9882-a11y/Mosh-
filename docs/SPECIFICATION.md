@@ -1,7 +1,7 @@
 # MOSH Language Specification
 
 - **Version:** 0.1 (initial draft)
-- **Status:** Design baseline; not a stable language contract
+- **Status:** Design baseline; initial name-resolution and scope rules in §4.1 are fixed
 - **Category:** General-purpose compiled programming language
 
 The words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** describe intended requirements at this draft stage. A requirement is not implemented merely because it appears here.
@@ -32,6 +32,17 @@ Mosh is not a Python wrapper, a database language, or a web framework.
 | Initial executable model | Native target executables |
 
 These decisions establish direction. Detailed semantics remain open until specified and tested.
+
+### 3.1 Source comments
+
+A line comment begins with `@` and continues to the end of that line. The lexer ignores comment text. The former `#` comment marker is not part of the Mosh 0.1 comment syntax.
+
+Examples:
+
+```mosh
+@ A full-line comment
+let count: Int = 3 @ A trailing comment
+```
 
 ## 3. Design principles
 
@@ -65,7 +76,43 @@ The intended compiler pipeline is:
 
 The compiler is implemented in Rust. LLVM is the initial backend, not the definition of Mosh's language semantics or runtime.
 
+
+### 4.1 Fixed initial name-resolution and scope rules
+
+The following rules are normative for the initial language and MUST NOT be changed implicitly:
+
+1. A module has a global scope. Top-level function names are registered before function bodies are analyzed. A function MAY be called before its textual definition, and functions MAY call each other recursively.
+2. A variable MUST be declared before it is used. An initializer is analyzed before the newly declared variable enters scope, so a declaration cannot refer to itself through its own name.
+3. Function parameters are local to that function. A function body has its own scope.
+4. Each `if`, `else`, and `while` body introduces a nested block scope. Names declared in that block are not visible after the block ends.
+5. A `for` iterable is evaluated before the loop variable is introduced. The loop variable and declarations in the loop body are visible only within the loop body scope.
+6. A name MAY be shadowed in a nested scope. A duplicate declaration in the same scope MUST be rejected.
+7. Undefined names and calls to undefined functions MUST be rejected with source locations.
+These seven rules are the approved, fixed scope and name-resolution contract. They define name resolution only; they do not constitute type checking, ownership checking, borrow checking, or a complete function-call type system.
+
+The first analyzer also currently checks that `return` appears inside a function and that assignments respect the `let`/`mut` declaration flag. These are initial implementation checks, not additional rules approved in the scope decision above. The initial implementation recognizes `print` as a built-in output function; the final built-in and standard-library model remains open.
+
 ## 5. Type system
+
+### 5.1 Fixed initial type-system contract (version 0.1)
+
+The following rules are approved and fixed for the initial primitive type checker:
+
+1. The initial primitive types are `Int`, `Float`, `Bool`, `String`, and `Unit`.
+2. A local binding with an initializer MAY omit its type annotation; the compiler infers its type from that initializer.
+3. An explicit variable type annotation MUST match the initializer's type exactly.
+4. Function parameter types MUST be explicit.
+5. A function without an explicit return type has return type `Unit`. A value-returning function MUST declare its return type.
+6. Assignment MUST preserve the declared/inferred type of the binding.
+7. Conditions in `if` and `while` MUST have type `Bool`.
+8. Implicit conversions are not allowed. In particular, `Int` and `Float` do not convert silently to one another.
+9. Arithmetic operators `+`, `-`, `*`, `/`, and `%` require two operands of the same numeric type (`Int` or `Float`) and produce that type.
+10. Relational comparisons require matching numeric operands and produce `Bool`. Equality/inequality require matching non-`Unit` operand types and produce `Bool`.
+11. Bitwise operators `&`, `|`, and `^` require `Int` operands and produce `Int`.
+12. Unary `-` accepts numeric operands; unary `!` accepts `Bool`.
+13. Type errors MUST report the expected and actual types where applicable, together with a source location.
+
+The initial checker recognizes `print` as a provisional polymorphic built-in that accepts values and returns `Unit`; this does not finalize the standard-library design. Iterable/collection typing, member access, indexing, pointers, structures, enumerations, generics, and ownership/borrow checking are outside this primitive-type milestone. The exact width and signedness of `Int`, and the representation/precision of `Float`, remain open decisions.
 
 Mosh uses static typing. The compiler MAY infer a type when it can do so unambiguously.
 
@@ -173,7 +220,7 @@ A minimal runtime is preferred where practical. The language MUST distinguish co
 3. Lexer and parser.
 4. AST, name resolution, and diagnostics.
 5. Static type checker.
-6. Mosh IR.
+6. Initial Mosh Intermediate Representation (MIR) and control-flow lowering.
 7. LLVM integration and first native executable.
 8. Ownership and borrow checker.
 9. Unsafe operations and low-level memory model.
@@ -202,4 +249,4 @@ The following must be resolved before the language can be considered fully speci
 
 ## 13. Implementation status
 
-This document is a design draft. It does not imply that a Mosh compiler, borrow checker, runtime, LLVM backend, standard library, or executable format has been implemented.
+This document is a design draft. The lexer, parser, initial semantic name/scope checks, first primitive static type checker, and initial MIR lowering for functions, local bindings, expressions, if/else, while-loops, and returns are implemented with tests. The type checker currently covers the fixed version 0.1 primitive contract; for-loop lowering (pending iterable types), compound types, ownership and borrow checking, runtime, LLVM backend, standard library, and native executable generation are not yet implemented.

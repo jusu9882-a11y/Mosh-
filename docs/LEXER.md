@@ -42,7 +42,7 @@ This is only the current lexer inventory, not a final operator or punctuation sp
 
 ### Comments and layout tokens
 
-- A hash (`#`) starts a line comment outside a string.
+- An at sign (`@`) starts a line comment outside a string.
 - LF, CRLF, and CR line endings are accepted.
 - Indentation is measured in leading spaces. A tab in leading indentation is an error; horizontal tabs between tokens are accepted as whitespace.
 - An increase in indentation emits one `Indent`; a decrease emits one or more `Dedent` tokens.
