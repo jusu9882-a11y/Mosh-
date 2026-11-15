@@ -137,10 +137,10 @@ pub fn validate(module: &MirModule) -> Result<(), Vec<LowerError>> {
                         function.name, block.id.0, index
                     ),
                     span: block
-                    .instructions
-                    .first()
-                    .map(|i| i.span)
-                    .unwrap_or_else(validation_span),
+                        .instructions
+                        .first()
+                        .map(|i| i.span)
+                        .unwrap_or_else(validation_span),
                 });
             }
             if block.terminator.is_none() {
@@ -215,10 +215,10 @@ pub fn validate(module: &MirModule) -> Result<(), Vec<LowerError>> {
                                     function.name, block.id.0, target.0
                                 ),
                                 span: block
-                                .instructions
-                                .last()
-                                .map(|i| i.span)
-                                .unwrap_or_else(validation_span),
+                                    .instructions
+                                    .last()
+                                    .map(|i| i.span)
+                                    .unwrap_or_else(validation_span),
                             });
                         }
                     }
@@ -243,10 +243,10 @@ pub fn validate(module: &MirModule) -> Result<(), Vec<LowerError>> {
                                         function.name, block.id.0, target.0
                                     ),
                                     span: block
-                                .instructions
-                                .last()
-                                .map(|i| i.span)
-                                .unwrap_or_else(validation_span),
+                                        .instructions
+                                        .last()
+                                        .map(|i| i.span)
+                                        .unwrap_or_else(validation_span),
                                 });
                             }
                         }
@@ -285,6 +285,9 @@ pub fn validate(module: &MirModule) -> Result<(), Vec<LowerError>> {
             }
         }
 
+        validate_value_dominance(function, &mut errors);
+        validate_instruction_types(module, function, &mut errors);
+
         for (value, span) in uses {
             if !definitions.contains(&value) {
                 errors.push(LowerError {
@@ -302,6 +305,546 @@ pub fn validate(module: &MirModule) -> Result<(), Vec<LowerError>> {
         Ok(())
     } else {
         Err(errors)
+    }
+}
+
+/// Check SSA-style value availability across instructions and control-flow edges.
+fn validate_value_dominance(function: &MirFunction, errors: &mut Vec<LowerError>) {
+    use std::collections::{HashMap, HashSet, VecDeque};
+
+    let block_count = function.blocks.len();
+    if block_count == 0 {
+        return;
+    }
+
+    let mut definitions = HashMap::<ValueId, (usize, usize)>::new();
+    let mut bindings = HashMap::<String, Vec<(usize, Option<usize>, bool)>>::new();
+    for parameter in &function.parameters {
+        bindings
+            .entry(parameter.name.clone())
+            .or_default()
+            .push((0, None, false));
+    }
+    for (block_index, block) in function.blocks.iter().enumerate() {
+        for (instruction_index, instruction) in block.instructions.iter().enumerate() {
+            if let Some(value) = instruction.result {
+                definitions
+                    .entry(value)
+                    .or_insert((block_index, instruction_index));
+            }
+            if let InstructionKind::Declare { name, mutable, .. } = &instruction.kind {
+                bindings.entry(name.clone()).or_default().push((
+                    block_index,
+                    Some(instruction_index),
+                    *mutable,
+                ));
+            }
+        }
+    }
+
+    let mut predecessors = vec![Vec::<usize>::new(); block_count];
+    for (source, block) in function.blocks.iter().enumerate() {
+        let mut add_edge = |target: BlockId| {
+            let target_index = target.0 as usize;
+            if target_index < block_count && !predecessors[target_index].contains(&source) {
+                predecessors[target_index].push(source);
+            }
+        };
+        match block.terminator.as_ref() {
+            Some(Terminator::Jump(target)) => add_edge(*target),
+            Some(Terminator::Branch {
+                then_block,
+                else_block,
+                ..
+            }) => {
+                add_edge(*then_block);
+                add_edge(*else_block);
+            }
+            Some(Terminator::Return(_)) | None => {}
+        }
+    }
+
+    let mut reachable = vec![false; block_count];
+    let mut queue = VecDeque::from([0usize]);
+    reachable[0] = true;
+    while let Some(source) = queue.pop_front() {
+        let targets: Vec<usize> = match function.blocks[source].terminator.as_ref() {
+            Some(Terminator::Jump(target)) => vec![target.0 as usize],
+            Some(Terminator::Branch {
+                then_block,
+                else_block,
+                ..
+            }) => vec![then_block.0 as usize, else_block.0 as usize],
+            Some(Terminator::Return(_)) | None => Vec::new(),
+        };
+        for target in targets {
+            if target < block_count && !reachable[target] {
+                reachable[target] = true;
+                queue.push_back(target);
+            }
+        }
+    }
+
+    let reachable_set: HashSet<usize> = reachable
+        .iter()
+        .enumerate()
+        .filter_map(|(index, is_reachable)| is_reachable.then_some(index))
+        .collect();
+    let mut dominators = vec![HashSet::<usize>::new(); block_count];
+    for index in 0..block_count {
+        if reachable[index] {
+            dominators[index] = if index == 0 {
+                HashSet::from([0])
+            } else {
+                reachable_set.clone()
+            };
+        } else {
+            dominators[index].insert(index);
+        }
+    }
+
+    loop {
+        let mut changed = false;
+        for block in 1..block_count {
+            if !reachable[block] {
+                continue;
+            }
+            let incoming: Vec<usize> = predecessors[block]
+                .iter()
+                .copied()
+                .filter(|predecessor| reachable[*predecessor])
+                .collect();
+            let mut next = if let Some(first) = incoming.first() {
+                dominators[*first].clone()
+            } else {
+                HashSet::new()
+            };
+            for predecessor in incoming.iter().skip(1) {
+                next.retain(|candidate| dominators[*predecessor].contains(candidate));
+            }
+            next.insert(block);
+            if next != dominators[block] {
+                dominators[block] = next;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    for (block_index, block) in function.blocks.iter().enumerate() {
+        for (instruction_index, instruction) in block.instructions.iter().enumerate() {
+            let binding_use = match &instruction.kind {
+                InstructionKind::Load { name } => Some((name, false)),
+                InstructionKind::Store { name, .. } => Some((name, true)),
+                _ => None,
+            };
+            let Some((name, requires_mutable)) = binding_use else {
+                continue;
+            };
+            let available = bindings.get(name).and_then(|candidates| {
+                candidates
+                    .iter()
+                    .filter(|(definition_block, definition_position, _)| {
+                        if *definition_block == block_index {
+                            definition_position.is_none_or(|position| position < instruction_index)
+                        } else {
+                            reachable[block_index]
+                                && reachable[*definition_block]
+                                && dominators[block_index].contains(definition_block)
+                        }
+                    })
+                    .max_by_key(|(definition_block, definition_position, _)| {
+                        (
+                            dominators[*definition_block].len(),
+                            definition_position.unwrap_or(0),
+                        )
+                    })
+            });
+            match available {
+                None => errors.push(LowerError {
+                    message: format!(
+                        "MIR function '{}' reads or writes variable '{}' before declaration or outside its scope",
+                        function.name, name
+                    ),
+                    span: instruction.span,
+                }),
+                Some((_, _, false)) if requires_mutable => errors.push(LowerError {
+                    message: format!(
+                        "MIR function '{}' stores to immutable variable '{}'",
+                        function.name, name
+                    ),
+                    span: instruction.span,
+                }),
+                Some(_) => {}
+            }
+        }
+    }
+
+    let mut check_use = |value: ValueId, use_block: usize, use_position: usize, span: Span| {
+        let Some((definition_block, definition_position)) = definitions.get(&value).copied() else {
+            return;
+        };
+        let valid = if definition_block == use_block {
+            definition_position < use_position
+        } else if reachable[use_block] {
+            reachable[definition_block] && dominators[use_block].contains(&definition_block)
+        } else {
+            false
+        };
+        if !valid {
+            errors.push(LowerError {
+                message: format!(
+                    "MIR function '{}' uses value {} before its definition or outside its defining block's dominance",
+                    function.name, value.0
+                ),
+                span,
+            });
+        }
+    };
+
+    for (block_index, block) in function.blocks.iter().enumerate() {
+        for (instruction_index, instruction) in block.instructions.iter().enumerate() {
+            let mut check =
+                |value| check_use(value, block_index, instruction_index, instruction.span);
+            match &instruction.kind {
+                InstructionKind::Declare { value, .. } => {
+                    if let Some(value) = value {
+                        check(*value);
+                    }
+                }
+                InstructionKind::Store { value, .. } => check(*value),
+                InstructionKind::Unary { operand, .. } => check(*operand),
+                InstructionKind::Binary { left, right, .. } => {
+                    check(*left);
+                    check(*right);
+                }
+                InstructionKind::Call { arguments, .. } => {
+                    for value in arguments {
+                        check(*value);
+                    }
+                }
+                InstructionKind::Integer(_)
+                | InstructionKind::Float(_)
+                | InstructionKind::String(_)
+                | InstructionKind::Boolean(_)
+                | InstructionKind::Load { .. } => {}
+            }
+        }
+
+        let span = block
+            .instructions
+            .last()
+            .map(|instruction| instruction.span)
+            .unwrap_or_else(validation_span);
+        if let Some(terminator) = &block.terminator {
+            match terminator {
+                Terminator::Branch { condition, .. } => {
+                    check_use(*condition, block_index, block.instructions.len(), span);
+                }
+                Terminator::Return(Some(value)) => {
+                    check_use(*value, block_index, block.instructions.len(), span);
+                }
+                Terminator::Jump(_) | Terminator::Return(None) => {}
+            }
+        }
+    }
+}
+
+/// Check all type relationships that can be proven from MIR's explicit value
+/// producers and the module's function signatures. Loads remain unknown here
+/// because the initial MIR local-binding representation does not carry types.
+fn validate_instruction_types(
+    module: &MirModule,
+    function: &MirFunction,
+    errors: &mut Vec<LowerError>,
+) {
+    use std::collections::{HashMap, HashSet};
+
+    let mut signatures = HashMap::<String, (Vec<MirType>, MirType)>::new();
+    for candidate in &module.functions {
+        let signature = (
+            candidate
+                .parameters
+                .iter()
+                .map(|parameter| parameter.ty)
+                .collect(),
+            candidate.return_type,
+        );
+        if signatures
+            .insert(candidate.name.clone(), signature)
+            .is_some()
+        {
+            errors.push(LowerError {
+                message: format!(
+                    "MIR module contains duplicate function '{}'",
+                    candidate.name
+                ),
+                span: validation_span(),
+            });
+        }
+    }
+
+    let mut definitions = HashMap::<ValueId, &Instruction>::new();
+    for block in &function.blocks {
+        for instruction in &block.instructions {
+            if let Some(value) = instruction.result {
+                definitions.entry(value).or_insert(instruction);
+            }
+        }
+    }
+
+    fn infer_type(
+        value: ValueId,
+        definitions: &HashMap<ValueId, &Instruction>,
+        signatures: &HashMap<String, (Vec<MirType>, MirType)>,
+        cache: &mut HashMap<ValueId, Option<MirType>>,
+        active: &mut HashSet<ValueId>,
+    ) -> Option<MirType> {
+        if let Some(cached) = cache.get(&value) {
+            return *cached;
+        }
+        if !active.insert(value) {
+            return None;
+        }
+        let inferred = definitions
+            .get(&value)
+            .and_then(|instruction| match &instruction.kind {
+                InstructionKind::Integer(_) => Some(MirType::Int),
+                InstructionKind::Float(_) => Some(MirType::Float),
+                InstructionKind::String(_) => Some(MirType::String),
+                InstructionKind::Boolean(_) => Some(MirType::Bool),
+                InstructionKind::Load { .. } => None,
+                InstructionKind::Unary { operator, operand } => {
+                    let operand_type =
+                        infer_type(*operand, definitions, signatures, cache, active)?;
+                    match operator {
+                        TokenKind::Minus
+                            if matches!(operand_type, MirType::Int | MirType::Float) =>
+                        {
+                            Some(operand_type)
+                        }
+                        TokenKind::Bang if operand_type == MirType::Bool => Some(MirType::Bool),
+                        _ => None,
+                    }
+                }
+                InstructionKind::Binary {
+                    left,
+                    operator,
+                    right,
+                } => {
+                    let left_type = infer_type(*left, definitions, signatures, cache, active)?;
+                    let right_type = infer_type(*right, definitions, signatures, cache, active)?;
+                    binary_result_type(left_type, operator, right_type)
+                }
+                InstructionKind::Call { name, .. } if name == "print" => Some(MirType::Unit),
+                InstructionKind::Call { name, .. } => {
+                    signatures.get(name).map(|(_, result)| *result)
+                }
+                InstructionKind::Declare { .. } | InstructionKind::Store { .. } => None,
+            });
+        active.remove(&value);
+        cache.insert(value, inferred);
+        inferred
+    }
+
+    fn binary_result_type(left: MirType, operator: &TokenKind, right: MirType) -> Option<MirType> {
+        match operator {
+            TokenKind::Plus
+            | TokenKind::Minus
+            | TokenKind::Star
+            | TokenKind::Slash
+            | TokenKind::Percent
+                if left == right && matches!(left, MirType::Int | MirType::Float) =>
+            {
+                Some(left)
+            }
+            TokenKind::Less
+            | TokenKind::LessEqual
+            | TokenKind::Greater
+            | TokenKind::GreaterEqual
+                if left == right && matches!(left, MirType::Int | MirType::Float) =>
+            {
+                Some(MirType::Bool)
+            }
+            TokenKind::Equal | TokenKind::NotEqual if left == right && left != MirType::Unit => {
+                Some(MirType::Bool)
+            }
+            TokenKind::Ampersand | TokenKind::Pipe | TokenKind::Caret
+                if left == MirType::Int && right == MirType::Int =>
+            {
+                Some(MirType::Int)
+            }
+            _ => None,
+        }
+    }
+
+    let mut cache = HashMap::<ValueId, Option<MirType>>::new();
+    for block in &function.blocks {
+        for instruction in &block.instructions {
+            match &instruction.kind {
+                InstructionKind::Unary { operator, operand } => {
+                    if let Some(operand_type) = infer_type(
+                        *operand,
+                        &definitions,
+                        &signatures,
+                        &mut cache,
+                        &mut HashSet::new(),
+                    ) {
+                        let valid = matches!(
+                            (operator, operand_type),
+                            (TokenKind::Minus, MirType::Int | MirType::Float)
+                                | (TokenKind::Bang, MirType::Bool)
+                        );
+                        if !valid {
+                            errors.push(LowerError {
+                                message: format!(
+                                    "MIR function '{}' applies an invalid unary operator to {:?}",
+                                    function.name, operand_type
+                                ),
+                                span: instruction.span,
+                            });
+                        }
+                    }
+                }
+                InstructionKind::Binary {
+                    left,
+                    operator,
+                    right,
+                } => {
+                    let left_type = infer_type(
+                        *left,
+                        &definitions,
+                        &signatures,
+                        &mut cache,
+                        &mut HashSet::new(),
+                    );
+                    let right_type = infer_type(
+                        *right,
+                        &definitions,
+                        &signatures,
+                        &mut cache,
+                        &mut HashSet::new(),
+                    );
+                    if let (Some(left_type), Some(right_type)) = (left_type, right_type) {
+                        if binary_result_type(left_type, operator, right_type).is_none() {
+                            errors.push(LowerError {
+                                message: format!(
+                                    "MIR function '{}' has incompatible {:?} operands for {:?}",
+                                    function.name, left_type, operator
+                                ),
+                                span: instruction.span,
+                            });
+                        }
+                    }
+                }
+                InstructionKind::Call { name, arguments } => {
+                    if name == "print" {
+                        continue;
+                    }
+                    match signatures.get(name) {
+                        None => errors.push(LowerError {
+                            message: format!(
+                                "MIR function '{}' calls unknown function '{}'",
+                                function.name, name
+                            ),
+                            span: instruction.span,
+                        }),
+                        Some((parameters, _)) => {
+                            if arguments.len() != parameters.len() {
+                                errors.push(LowerError {
+                                    message: format!(
+                                        "MIR call to '{}' expects {} argument(s), found {}",
+                                        name,
+                                        parameters.len(),
+                                        arguments.len()
+                                    ),
+                                    span: instruction.span,
+                                });
+                            }
+                            for (index, (argument, expected)) in
+                                arguments.iter().zip(parameters).enumerate()
+                            {
+                                if let Some(actual) = infer_type(
+                                    *argument,
+                                    &definitions,
+                                    &signatures,
+                                    &mut cache,
+                                    &mut HashSet::new(),
+                                ) {
+                                    if actual != *expected {
+                                        errors.push(LowerError {
+                                            message: format!(
+                                                "MIR call argument {} to '{}' has type {:?}, expected {:?}",
+                                                index + 1, name, actual, expected
+                                            ),
+                                            span: instruction.span,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                InstructionKind::Integer(_)
+                | InstructionKind::Float(_)
+                | InstructionKind::String(_)
+                | InstructionKind::Boolean(_)
+                | InstructionKind::Load { .. }
+                | InstructionKind::Declare { .. }
+                | InstructionKind::Store { .. } => {}
+            }
+        }
+
+        if let Some(terminator) = &block.terminator {
+            let span = block
+                .instructions
+                .last()
+                .map(|instruction| instruction.span)
+                .unwrap_or_else(validation_span);
+            match terminator {
+                Terminator::Branch { condition, .. } => {
+                    if let Some(actual) = infer_type(
+                        *condition,
+                        &definitions,
+                        &signatures,
+                        &mut cache,
+                        &mut HashSet::new(),
+                    ) {
+                        if actual != MirType::Bool {
+                            errors.push(LowerError {
+                                message: format!(
+                                    "MIR branch condition must be Bool, found {:?}",
+                                    actual
+                                ),
+                                span,
+                            });
+                        }
+                    }
+                }
+                Terminator::Return(Some(value)) => {
+                    if let Some(actual) = infer_type(
+                        *value,
+                        &definitions,
+                        &signatures,
+                        &mut cache,
+                        &mut HashSet::new(),
+                    ) {
+                        if actual != function.return_type {
+                            errors.push(LowerError {
+                                message: format!(
+                                    "MIR function '{}' returns {:?}, but declares {:?}",
+                                    function.name, actual, function.return_type
+                                ),
+                                span,
+                            });
+                        }
+                    }
+                }
+                Terminator::Jump(_) | Terminator::Return(None) => {}
+            }
+        }
     }
 }
 
@@ -881,6 +1424,155 @@ mod tests {
         let module = compile(
             "function choose(flag: Bool) -> Int:\n    if flag:\n        return 1\n    else:\n        return 2\n",
         ).unwrap();
+        assert!(super::validate(&module).is_ok());
+    }
+
+    #[test]
+    fn validator_rejects_same_block_use_before_definition() {
+        let mut module = compile("function main() -> Int:\n    return 1 + 2\n").unwrap();
+        module.functions[0].blocks[0].instructions.swap(0, 2);
+        let errors = super::validate(&module).unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("before its definition")));
+    }
+
+    #[test]
+    fn validator_rejects_branch_local_value_used_after_merge() {
+        let mut module = compile(
+            "function main(flag: Bool) -> Int:\n    if flag:\n        let x = 1\n    return 2\n",
+        )
+        .unwrap();
+        let merge = module.functions[0].blocks.last_mut().unwrap();
+        let returned = merge.instructions.last().unwrap().result.unwrap();
+        let new_value = super::ValueId(3);
+        let span = merge.instructions.last().unwrap().span;
+        merge.instructions.push(super::Instruction {
+            result: Some(new_value),
+            kind: InstructionKind::Binary {
+                left: super::ValueId(1),
+                operator: crate::lexer::TokenKind::Plus,
+                right: returned,
+            },
+            span,
+        });
+        merge.terminator = Some(Terminator::Return(Some(new_value)));
+        let errors = super::validate(&module).unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("dominance")));
+    }
+
+    #[test]
+    fn validator_rejects_known_return_and_branch_type_mismatches() {
+        let mut module = compile("function main() -> Int:\n    return 1\n").unwrap();
+        module.functions[0].return_type = super::MirType::Bool;
+        let errors = super::validate(&module).unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("returns Int")));
+
+        let mut module =
+            compile("function main() -> Unit:\n    if true:\n        print(1)\n").unwrap();
+        let block = &mut module.functions[0].blocks[0];
+        let span = block.instructions[0].span;
+        block.instructions.push(super::Instruction {
+            result: Some(super::ValueId(1)),
+            kind: InstructionKind::Integer("9".into()),
+            span,
+        });
+        if let Some(Terminator::Branch { condition, .. }) = &mut block.terminator {
+            *condition = super::ValueId(1);
+        }
+        let errors = super::validate(&module).unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("branch condition must be Bool")));
+    }
+
+    #[test]
+    fn validator_checks_call_signatures_and_argument_types() {
+        let mut module = compile(
+            "function consume(value: Int) -> Unit:\n    return\nfunction main() -> Unit:\n    consume(1)\n",
+        )
+        .unwrap();
+        module.functions[0].parameters[0].ty = super::MirType::Bool;
+        let errors = super::validate(&module).unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("call argument 1")));
+    }
+
+    #[test]
+    fn validator_rejects_loads_of_undeclared_or_out_of_scope_variables() {
+        let mut module = compile(
+            "function main(flag: Bool) -> Int:\n    if flag:\n        let local = 1\n    return 2\n",
+        )
+        .unwrap();
+        let merge = module.functions[0].blocks.last_mut().unwrap();
+        let span = merge.instructions.last().unwrap().span;
+        merge.instructions.insert(
+            0,
+            super::Instruction {
+                result: Some(super::ValueId(3)),
+                kind: InstructionKind::Load {
+                    name: "local".into(),
+                },
+                span,
+            },
+        );
+        let errors = super::validate(&module).unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("outside its scope")));
+    }
+
+    #[test]
+    fn validator_rejects_stores_to_immutable_parameters() {
+        let mut module =
+            compile("function main(value: Int) -> Unit:\n    let x = 1\n    return\n").unwrap();
+        let block = &mut module.functions[0].blocks[0];
+        let span = block.instructions[0].span;
+        block.instructions.push(super::Instruction {
+            result: Some(super::ValueId(1)),
+            kind: InstructionKind::Integer("7".into()),
+            span,
+        });
+        block.instructions.push(super::Instruction {
+            result: None,
+            kind: InstructionKind::Store {
+                name: "value".into(),
+                value: super::ValueId(1),
+            },
+            span,
+        });
+        let errors = super::validate(&module).unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("stores to immutable")));
+    }
+
+    #[test]
+    fn validator_accepts_loop_condition_used_in_dominated_body() {
+        let mut module =
+            compile("function main() -> Unit:\n    while true:\n        print(1)\n").unwrap();
+        let condition = module.functions[0].blocks[1].instructions[0]
+            .result
+            .unwrap();
+        let body = &mut module.functions[0].blocks[2];
+        let span = body.instructions[0].span;
+        body.instructions.insert(
+            0,
+            super::Instruction {
+                result: None,
+                kind: InstructionKind::Declare {
+                    name: "loop_condition".into(),
+                    mutable: false,
+                    value: Some(condition),
+                },
+                span,
+            },
+        );
         assert!(super::validate(&module).is_ok());
     }
 
