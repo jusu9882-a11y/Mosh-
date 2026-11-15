@@ -552,7 +552,6 @@ fn validate_value_dominance(function: &MirFunction, errors: &mut Vec<LowerError>
     }
 }
 
-
 /// Check all type relationships that can be proven from MIR's explicit value
 /// producers and the module's function signatures. Loads remain unknown here
 /// because the initial MIR local-binding representation does not carry types.
@@ -566,12 +565,22 @@ fn validate_instruction_types(
     let mut signatures = HashMap::<String, (Vec<MirType>, MirType)>::new();
     for candidate in &module.functions {
         let signature = (
-            candidate.parameters.iter().map(|parameter| parameter.ty).collect(),
+            candidate
+                .parameters
+                .iter()
+                .map(|parameter| parameter.ty)
+                .collect(),
             candidate.return_type,
         );
-        if signatures.insert(candidate.name.clone(), signature).is_some() {
+        if signatures
+            .insert(candidate.name.clone(), signature)
+            .is_some()
+        {
             errors.push(LowerError {
-                message: format!("MIR module contains duplicate function '{}'", candidate.name),
+                message: format!(
+                    "MIR module contains duplicate function '{}'",
+                    candidate.name
+                ),
                 span: validation_span(),
             });
         }
@@ -599,8 +608,9 @@ fn validate_instruction_types(
         if !active.insert(value) {
             return None;
         }
-        let inferred = definitions.get(&value).and_then(|instruction| {
-            match &instruction.kind {
+        let inferred = definitions
+            .get(&value)
+            .and_then(|instruction| match &instruction.kind {
                 InstructionKind::Integer(_) => Some(MirType::Int),
                 InstructionKind::Float(_) => Some(MirType::Float),
                 InstructionKind::String(_) => Some(MirType::String),
@@ -619,7 +629,11 @@ fn validate_instruction_types(
                         _ => None,
                     }
                 }
-                InstructionKind::Binary { left, operator, right } => {
+                InstructionKind::Binary {
+                    left,
+                    operator,
+                    right,
+                } => {
                     let left_type = infer_type(*left, definitions, signatures, cache, active)?;
                     let right_type = infer_type(*right, definitions, signatures, cache, active)?;
                     binary_result_type(left_type, operator, right_type)
@@ -629,18 +643,13 @@ fn validate_instruction_types(
                     signatures.get(name).map(|(_, result)| *result)
                 }
                 InstructionKind::Declare { .. } | InstructionKind::Store { .. } => None,
-            }
-        });
+            });
         active.remove(&value);
         cache.insert(value, inferred);
         inferred
     }
 
-    fn binary_result_type(
-        left: MirType,
-        operator: &TokenKind,
-        right: MirType,
-    ) -> Option<MirType> {
+    fn binary_result_type(left: MirType, operator: &TokenKind, right: MirType) -> Option<MirType> {
         match operator {
             TokenKind::Plus
             | TokenKind::Minus
@@ -676,9 +685,13 @@ fn validate_instruction_types(
         for instruction in &block.instructions {
             match &instruction.kind {
                 InstructionKind::Unary { operator, operand } => {
-                    if let Some(operand_type) =
-                        infer_type(*operand, &definitions, &signatures, &mut cache, &mut HashSet::new())
-                    {
+                    if let Some(operand_type) = infer_type(
+                        *operand,
+                        &definitions,
+                        &signatures,
+                        &mut cache,
+                        &mut HashSet::new(),
+                    ) {
                         let valid = matches!(
                             (operator, operand_type),
                             (TokenKind::Minus, MirType::Int | MirType::Float)
@@ -695,11 +708,25 @@ fn validate_instruction_types(
                         }
                     }
                 }
-                InstructionKind::Binary { left, operator, right } => {
-                    let left_type =
-                        infer_type(*left, &definitions, &signatures, &mut cache, &mut HashSet::new());
-                    let right_type =
-                        infer_type(*right, &definitions, &signatures, &mut cache, &mut HashSet::new());
+                InstructionKind::Binary {
+                    left,
+                    operator,
+                    right,
+                } => {
+                    let left_type = infer_type(
+                        *left,
+                        &definitions,
+                        &signatures,
+                        &mut cache,
+                        &mut HashSet::new(),
+                    );
+                    let right_type = infer_type(
+                        *right,
+                        &definitions,
+                        &signatures,
+                        &mut cache,
+                        &mut HashSet::new(),
+                    );
                     if let (Some(left_type), Some(right_type)) = (left_type, right_type) {
                         if binary_result_type(left_type, operator, right_type).is_none() {
                             errors.push(LowerError {
@@ -729,7 +756,9 @@ fn validate_instruction_types(
                                 errors.push(LowerError {
                                     message: format!(
                                         "MIR call to '{}' expects {} argument(s), found {}",
-                                        name, parameters.len(), arguments.len()
+                                        name,
+                                        parameters.len(),
+                                        arguments.len()
                                     ),
                                     span: instruction.span,
                                 });
@@ -1439,12 +1468,12 @@ mod tests {
         let mut module = compile("function main() -> Int:\n    return 1\n").unwrap();
         module.functions[0].return_type = super::MirType::Bool;
         let errors = super::validate(&module).unwrap_err();
-        assert!(errors.iter().any(|error| error.message.contains("returns Int")));
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("returns Int")));
 
-        let mut module = compile(
-            "function main() -> Unit:\n    if true:\n        print(1)\n",
-        )
-        .unwrap();
+        let mut module =
+            compile("function main() -> Unit:\n    if true:\n        print(1)\n").unwrap();
         let block = &mut module.functions[0].blocks[0];
         let span = block.instructions[0].span;
         block.instructions.push(super::Instruction {
@@ -1456,7 +1485,9 @@ mod tests {
             *condition = super::ValueId(1);
         }
         let errors = super::validate(&module).unwrap_err();
-        assert!(errors.iter().any(|error| error.message.contains("branch condition must be Bool")));
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("branch condition must be Bool")));
     }
 
     #[test]
@@ -1467,7 +1498,9 @@ mod tests {
         .unwrap();
         module.functions[0].parameters[0].ty = super::MirType::Bool;
         let errors = super::validate(&module).unwrap_err();
-        assert!(errors.iter().any(|error| error.message.contains("call argument 1")));
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("call argument 1")));
     }
 
     #[test]
