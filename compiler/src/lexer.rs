@@ -805,7 +805,7 @@ mod tests {
         assert_eq!(ascii_error.span.line, 1);
         assert_eq!(ascii_error.span.column, 9);
         assert_eq!(ascii_error.span.end_column, 10);
-        assert!(ascii_error.message.contains("@"));
+        assert!(ascii_error.message.contains("#"));
 
         let unicode_error = tokenize("let x = é").unwrap_err();
         assert_eq!(unicode_error.span.start, 8);
