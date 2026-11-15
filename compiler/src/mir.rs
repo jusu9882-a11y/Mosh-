@@ -136,7 +136,11 @@ pub fn validate(module: &MirModule) -> Result<(), Vec<LowerError>> {
                         "MIR function '{}' has invalid block ID {} at position {}",
                         function.name, block.id.0, index
                     ),
-                    span: block.instructions.first().map(|i| i.span).unwrap_or_else(validation_span),
+                    span: block
+                    .instructions
+                    .first()
+                    .map(|i| i.span)
+                    .unwrap_or_else(validation_span),
                 });
             }
             if block.terminator.is_none() {
@@ -210,7 +214,11 @@ pub fn validate(module: &MirModule) -> Result<(), Vec<LowerError>> {
                                     "MIR function '{}' block {} jumps to missing block {}",
                                     function.name, block.id.0, target.0
                                 ),
-                                span: block.instructions.last().map(|i| i.span).unwrap_or_else(validation_span),
+                                span: block
+                                .instructions
+                                .last()
+                                .map(|i| i.span)
+                                .unwrap_or_else(validation_span),
                             });
                         }
                     }
@@ -234,7 +242,11 @@ pub fn validate(module: &MirModule) -> Result<(), Vec<LowerError>> {
                                         "MIR function '{}' block {} branches to missing block {}",
                                         function.name, block.id.0, target.0
                                     ),
-                                    span: block.instructions.last().map(|i| i.span).unwrap_or_else(validation_span),
+                                    span: block
+                                .instructions
+                                .last()
+                                .map(|i| i.span)
+                                .unwrap_or_else(validation_span),
                                 });
                             }
                         }
@@ -251,7 +263,11 @@ pub fn validate(module: &MirModule) -> Result<(), Vec<LowerError>> {
                                     "MIR function '{}' has a return value inconsistent with its declared return type",
                                     function.name
                                 ),
-                                span: block.instructions.last().map(|i| i.span).unwrap_or_else(validation_span),
+                                span: block
+                                .instructions
+                                .last()
+                                .map(|i| i.span)
+                                .unwrap_or_else(validation_span),
                             });
                         }
                         uses.extend(value.iter().copied().map(|v| {
@@ -826,7 +842,6 @@ mod tests {
             .message
             .contains("can reach the end without returning a value")));
     }
-
 
     #[test]
     fn validator_rejects_missing_terminators_and_invalid_targets() {
