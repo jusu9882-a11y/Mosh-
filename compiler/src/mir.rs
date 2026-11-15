@@ -151,7 +151,7 @@ pub fn validate(module: &MirModule) -> Result<(), Vec<LowerError>> {
 
             for instruction in &block.instructions {
                 let expects_result = !matches!(
-                    instruction.kind,
+                    &instruction.kind,
                     InstructionKind::Declare { .. } | InstructionKind::Store { .. }
                 );
                 if instruction.result.is_some() != expects_result {
@@ -800,7 +800,7 @@ mod tests {
 
     #[test]
     fn validator_rejects_missing_terminators_and_invalid_targets() {
-        let mut module = compile("function main():\\n    print(1)\\n").unwrap();
+        let mut module = compile("function main():\n    print(1)\n").unwrap();
         module.functions[0].blocks[0].terminator = Some(Terminator::Jump(super::BlockId(99)));
         let errors = super::validate(&module).unwrap_err();
         assert!(errors.iter().any(|error| error.message.contains("missing block 99")));
@@ -812,7 +812,7 @@ mod tests {
 
     #[test]
     fn validator_rejects_undefined_values_and_inconsistent_returns() {
-        let mut module = compile("function main() -> Int:\\n    return 1\\n").unwrap();
+        let mut module = compile("function main() -> Int:\n    return 1\n").unwrap();
         module.functions[0].blocks[0].terminator = Some(Terminator::Return(Some(super::ValueId(999))));
         let errors = super::validate(&module).unwrap_err();
         assert!(errors.iter().any(|error| error.message.contains("uses undefined value 999")));
@@ -825,7 +825,7 @@ mod tests {
     #[test]
     fn validator_accepts_lowered_control_flow() {
         let module = compile(
-            "function choose(flag: Bool) -> Int:\\n    if flag:\\n        return 1\\n    else:\\n        return 2\\n",
+            "function choose(flag: Bool) -> Int:\n    if flag:\n        return 1\n    else:\n        return 2\n",
         ).unwrap();
         assert!(super::validate(&module).is_ok());
     }
