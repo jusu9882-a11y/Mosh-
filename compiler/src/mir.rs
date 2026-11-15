@@ -313,13 +313,17 @@ fn validate_value_dominance(function: &MirFunction, errors: &mut Vec<LowerError>
     use std::collections::{HashMap, HashSet, VecDeque};
 
     let block_count = function.blocks.len();
-    if block_count == 0 { return; }
+    if block_count == 0 {
+        return;
+    }
 
     let mut definitions = HashMap::<ValueId, (usize, usize)>::new();
     for (block_index, block) in function.blocks.iter().enumerate() {
         for (instruction_index, instruction) in block.instructions.iter().enumerate() {
             if let Some(value) = instruction.result {
-                definitions.entry(value).or_insert((block_index, instruction_index));
+                definitions
+                    .entry(value)
+                    .or_insert((block_index, instruction_index));
             }
         }
     }
@@ -334,7 +338,11 @@ fn validate_value_dominance(function: &MirFunction, errors: &mut Vec<LowerError>
         };
         match block.terminator.as_ref() {
             Some(Terminator::Jump(target)) => add_edge(*target),
-            Some(Terminator::Branch { then_block, else_block, .. }) => {
+            Some(Terminator::Branch {
+                then_block,
+                else_block,
+                ..
+            }) => {
                 add_edge(*then_block);
                 add_edge(*else_block);
             }
@@ -348,9 +356,11 @@ fn validate_value_dominance(function: &MirFunction, errors: &mut Vec<LowerError>
     while let Some(source) = queue.pop_front() {
         let targets: Vec<usize> = match function.blocks[source].terminator.as_ref() {
             Some(Terminator::Jump(target)) => vec![target.0 as usize],
-            Some(Terminator::Branch { then_block, else_block, .. }) => {
-                vec![then_block.0 as usize, else_block.0 as usize]
-            }
+            Some(Terminator::Branch {
+                then_block,
+                else_block,
+                ..
+            }) => vec![then_block.0 as usize, else_block.0 as usize],
             Some(Terminator::Return(_)) | None => Vec::new(),
         };
         for target in targets {
@@ -361,13 +371,19 @@ fn validate_value_dominance(function: &MirFunction, errors: &mut Vec<LowerError>
         }
     }
 
-    let reachable_set: HashSet<usize> = reachable.iter().enumerate()
+    let reachable_set: HashSet<usize> = reachable
+        .iter()
+        .enumerate()
         .filter_map(|(index, is_reachable)| is_reachable.then_some(index))
         .collect();
     let mut dominators = vec![HashSet::<usize>::new(); block_count];
     for index in 0..block_count {
         if reachable[index] {
-            dominators[index] = if index == 0 { HashSet::from([0]) } else { reachable_set.clone() };
+            dominators[index] = if index == 0 {
+                HashSet::from([0])
+            } else {
+                reachable_set.clone()
+            };
         } else {
             dominators[index].insert(index);
         }
@@ -376,9 +392,14 @@ fn validate_value_dominance(function: &MirFunction, errors: &mut Vec<LowerError>
     loop {
         let mut changed = false;
         for block in 1..block_count {
-            if !reachable[block] { continue; }
-            let incoming: Vec<usize> = predecessors[block].iter().copied()
-                .filter(|predecessor| reachable[*predecessor]).collect();
+            if !reachable[block] {
+                continue;
+            }
+            let incoming: Vec<usize> = predecessors[block]
+                .iter()
+                .copied()
+                .filter(|predecessor| reachable[*predecessor])
+                .collect();
             let mut next = if let Some(first) = incoming.first() {
                 dominators[*first].clone()
             } else {
@@ -393,37 +414,44 @@ fn validate_value_dominance(function: &MirFunction, errors: &mut Vec<LowerError>
                 changed = true;
             }
         }
-        if !changed { break; }
+        if !changed {
+            break;
+        }
     }
 
-    let mut check_use = |value: ValueId, use_block: usize, use_position: usize, span: Span| {
-        let Some((definition_block, definition_position)) = definitions.get(&value).copied() else {
-            return;
+    let mut check_use =
+        |value: ValueId, use_block: usize, use_position: usize, span: Span| {
+            let Some((definition_block, definition_position)) = definitions.get(&value).copied()
+            else {
+                return;
+            };
+            let valid = if definition_block == use_block {
+                definition_position < use_position
+            } else if reachable[use_block] {
+                reachable[definition_block] && dominators[use_block].contains(&definition_block)
+            } else {
+                false
+            };
+            if !valid {
+                errors.push(LowerError {
+                    message: format!(
+                        "MIR function '{}' uses value {} before its definition or outside its defining block's dominance",
+                        function.name, value.0
+                    ),
+                    span,
+                });
+            }
         };
-        let valid = if definition_block == use_block {
-            definition_position < use_position
-        } else if reachable[use_block] {
-            reachable[definition_block] && dominators[use_block].contains(&definition_block)
-        } else {
-            false
-        };
-        if !valid {
-            errors.push(LowerError {
-                message: format!(
-                    "MIR function '{}' uses value {} before its definition or outside its defining block's dominance",
-                    function.name, value.0
-                ),
-                span,
-            });
-        }
-    };
 
     for (block_index, block) in function.blocks.iter().enumerate() {
         for (instruction_index, instruction) in block.instructions.iter().enumerate() {
-            let mut check = |value| check_use(value, block_index, instruction_index, instruction.span);
+            let mut check =
+                |value| check_use(value, block_index, instruction_index, instruction.span);
             match &instruction.kind {
                 InstructionKind::Declare { value, .. } => {
-                    if let Some(value) = value { check(*value); }
+                    if let Some(value) = value {
+                        check(*value);
+                    }
                 }
                 InstructionKind::Store { value, .. } => check(*value),
                 InstructionKind::Unary { operand, .. } => check(*operand),
@@ -432,7 +460,9 @@ fn validate_value_dominance(function: &MirFunction, errors: &mut Vec<LowerError>
                     check(*right);
                 }
                 InstructionKind::Call { arguments, .. } => {
-                    for value in arguments { check(*value); }
+                    for value in arguments {
+                        check(*value);
+                    }
                 }
                 InstructionKind::Integer(_)
                 | InstructionKind::Float(_)
@@ -442,7 +472,10 @@ fn validate_value_dominance(function: &MirFunction, errors: &mut Vec<LowerError>
             }
         }
 
-        let span = block.instructions.last().map(|instruction| instruction.span)
+        let span = block
+            .instructions
+            .last()
+            .map(|instruction| instruction.span)
             .unwrap_or_else(validation_span);
         if let Some(terminator) = &block.terminator {
             match terminator {
@@ -1042,7 +1075,9 @@ mod tests {
         let mut module = compile("function main() -> Int:\n    return 1 + 2\n").unwrap();
         module.functions[0].blocks[0].instructions.swap(0, 2);
         let errors = super::validate(&module).unwrap_err();
-        assert!(errors.iter().any(|error| error.message.contains("before its definition")));
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("before its definition")));
     }
 
     #[test]
@@ -1065,26 +1100,32 @@ mod tests {
         });
         merge.terminator = Some(Terminator::Return(Some(new_value)));
         let errors = super::validate(&module).unwrap_err();
-        assert!(errors.iter().any(|error| error.message.contains("dominance")));
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("dominance")));
     }
 
     #[test]
     fn validator_accepts_loop_condition_used_in_dominated_body() {
-        let mut module = compile(
-            "function main() -> Unit:\n    while true:\n        print(1)\n",
-        ).unwrap();
-        let condition = module.functions[0].blocks[1].instructions[0].result.unwrap();
+        let mut module =
+            compile("function main() -> Unit:\n    while true:\n        print(1)\n").unwrap();
+        let condition = module.functions[0].blocks[1].instructions[0]
+            .result
+            .unwrap();
         let body = &mut module.functions[0].blocks[2];
         let span = body.instructions[0].span;
-        body.instructions.insert(0, super::Instruction {
-            result: None,
-            kind: InstructionKind::Declare {
-                name: "loop_condition".into(),
-                mutable: false,
-                value: Some(condition),
+        body.instructions.insert(
+            0,
+            super::Instruction {
+                result: None,
+                kind: InstructionKind::Declare {
+                    name: "loop_condition".into(),
+                    mutable: false,
+                    value: Some(condition),
+                },
+                span,
             },
-            span,
-        });
+        );
         assert!(super::validate(&module).is_ok());
     }
 
