@@ -249,7 +249,27 @@ impl Builder {
         self.statements(statements, BlockId(0));
         for block in &mut self.function.blocks {
             if block.terminator.is_none() {
-                block.terminator = Some(Terminator::Return(None));
+                if self.function.return_type == MirType::Unit {
+                    block.terminator = Some(Terminator::Return(None));
+                } else {
+                    let span = block.instructions.last().map(|instruction| instruction.span).unwrap_or(
+                        Span {
+                            start: 0,
+                            end: 0,
+                            line: 1,
+                            column: 1,
+                            end_line: 1,
+                            end_column: 1,
+                        },
+                    );
+                    self.errors.push(LowerError {
+                        message: format!(
+                            "non-Unit function '{}' can reach the end without returning a value",
+                            self.function.name
+                        ),
+                        span,
+                    });
+                }
             }
         }
         if self.errors.is_empty() {
@@ -341,7 +361,6 @@ impl Builder {
                 };
                 let then_block = self.block();
                 let else_block = self.block();
-                let merge = self.block();
                 self.end(
                     current,
                     Terminator::Branch {
@@ -351,24 +370,29 @@ impl Builder {
                     },
                 );
                 let then_end = self.statements(then_body, then_block);
-                if self.function.blocks[then_end.0 as usize]
-                    .terminator
-                    .is_none()
-                {
-                    self.end(then_end, Terminator::Jump(merge));
-                }
                 let else_end = if let Some(body) = else_body {
                     self.statements(body, else_block)
                 } else {
                     else_block
                 };
-                if self.function.blocks[else_end.0 as usize]
-                    .terminator
-                    .is_none()
-                {
-                    self.end(else_end, Terminator::Jump(merge));
+                let then_terminated =
+                    self.function.blocks[then_end.0 as usize].terminator.is_some();
+                let else_terminated =
+                    self.function.blocks[else_end.0 as usize].terminator.is_some();
+
+                if then_terminated && else_terminated {
+                    // Both paths leave control flow; a merge block would be unreachable.
+                    then_end
+                } else {
+                    let merge = self.block();
+                    if !then_terminated {
+                        self.end(then_end, Terminator::Jump(merge));
+                    }
+                    if !else_terminated {
+                        self.end(else_end, Terminator::Jump(merge));
+                    }
+                    merge
                 }
-                merge
             }
             Stmt::While {
                 condition, body, ..
@@ -567,6 +591,46 @@ mod tests {
         let module = compile("let answer: Int = 42\nprint(answer)\n").unwrap();
         assert_eq!(module.functions[0].name, "__mosh_init");
     }
+
+    #[test]
+    fn does_not_create_an_unreachable_merge_when_both_if_branches_return() {
+        let module = compile(
+            "function choose(flag: Bool) -> Int:\n    if flag:\n        return 1\n    else:\n        return 2\n",
+        )
+        .unwrap();
+        let function = &module.functions[0];
+        assert_eq!(function.blocks.len(), 3);
+        assert!(function.blocks.iter().all(|block| block.terminator.is_some()));
+        assert!(function.blocks.iter().all(|block| !matches!(
+            block.terminator,
+            Some(Terminator::Jump(target)) if target.0 as usize >= function.blocks.len()
+        )));
+    }
+
+    #[test]
+    fn stops_lowering_after_both_nested_if_paths_return() {
+        let module = compile(
+            "function choose(flag: Bool, other: Bool) -> Int:\n    if flag:\n        if other:\n            return 1\n        else:\n            return 2\n    else:\n        return 3\n    print(4)\n",
+        )
+        .unwrap();
+        let function = &module.functions[0];
+        assert!(function.blocks.iter().all(|block| block.terminator.is_some()));
+        assert!(!function.blocks.iter().any(|block| block.instructions.iter().any(
+            |instruction| matches!(&instruction.kind, InstructionKind::Call { name, .. } if name == "print")
+        )));
+    }
+
+    #[test]
+    fn rejects_non_unit_fallthrough_during_lowering() {
+        let tokens = tokenize("function missing() -> Int:\n    let value = 1\n").unwrap();
+        let program = parse(&tokens).unwrap();
+        crate::semantic::analyze(&program).unwrap();
+        let errors = lower(&program).unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains(
+            "can reach the end without returning a value"
+        )));
+    }
+
     #[test]
     fn reports_deferred_for_loop_lowering() {
         let tokens = tokenize("let items: Int = 1\nfor item in items:\n    print(item)\n").unwrap();
