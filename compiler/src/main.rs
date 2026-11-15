@@ -1,4 +1,5 @@
 mod lexer;
+mod llvm;
 mod mir;
 mod parser;
 mod semantic;
@@ -6,7 +7,8 @@ mod typecheck;
 
 use std::env;
 use std::fs;
-use std::process::ExitCode;
+use std::process::{Command, ExitCode};
+use std::path::Path;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -21,10 +23,12 @@ fn print_help() {
     println!("    moshc parse <source.mosh>");
     println!("    moshc check <source.mosh>");
     println!("    moshc mir <source.mosh>");
+    println!("    moshc build <source.mosh> [-o <executable>]");
     println!();
     println!("The lex and parse commands are development tools.");
     println!("The check command runs parsing, name resolution, and static type checking.");
-    println!("The mir command lowers a checked program to the initial Mosh IR.");
+    println!("The mir command lowers a checked program to Mosh IR.");
+    println!("The build command generates LLVM IR and invokes clang to create a native executable.");
 }
 
 fn read_source(path: &str) -> Result<String, ExitCode> {
@@ -174,6 +178,97 @@ fn run_mir(path: &str) -> ExitCode {
     }
 }
 
+
+fn run_build(path: &str, output: Option<&str>) -> ExitCode {
+    let source = match read_source(path) {
+        Ok(source) => source,
+        Err(code) => return code,
+    };
+    let tokens = match lexer::tokenize(&source) {
+        Ok(tokens) => tokens,
+        Err(error) => {
+            eprintln!("moshc: {path}: {error}");
+            return ExitCode::from(1);
+        }
+    };
+    let Some(program) = parse_program(path, &tokens) else {
+        return ExitCode::from(1);
+    };
+    if let Err(errors) = semantic::analyze(&program) {
+        for error in errors {
+            eprintln!("moshc: {path}: {error}");
+        }
+        return ExitCode::from(1);
+    }
+    if let Err(errors) = typecheck::check(&program) {
+        for error in errors {
+            eprintln!("moshc: {path}: {error}");
+        }
+        return ExitCode::from(1);
+    }
+    let module = match mir::lower(&program) {
+        Ok(module) => module,
+        Err(errors) => {
+            for error in errors {
+                eprintln!("moshc: {path}: {error}");
+            }
+            return ExitCode::from(1);
+        }
+    };
+    let ir = match llvm::generate(&module) {
+        Ok(ir) => ir,
+        Err(errors) => {
+            for error in errors {
+                eprintln!("moshc: {path}: {error}");
+            }
+            return ExitCode::from(1);
+        }
+    };
+
+    let source_name = Path::new(path)
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("mosh");
+    let ir_path = std::env::temp_dir().join(format!(
+        "moshc-{}-{source_name}.ll",
+        std::process::id()
+    ));
+    if let Err(error) = fs::write(&ir_path, ir) {
+        eprintln!("moshc: cannot write temporary LLVM IR: {error}");
+        return ExitCode::from(1);
+    }
+    let default_output = Path::new(path).with_extension("");
+    let output_path = output.map(Path::new).map(Path::to_path_buf).unwrap_or(default_output);
+    let result = Command::new("clang")
+        .arg("-x")
+        .arg("ir")
+        .arg("-O0")
+        .arg(&ir_path)
+        .arg("-o")
+        .arg(&output_path)
+        .output();
+    let _ = fs::remove_file(&ir_path);
+
+    match result {
+        Ok(result) if result.status.success() => {
+            println!("Built native executable: {}", output_path.display());
+            ExitCode::SUCCESS
+        }
+        Ok(result) => {
+            eprintln!("moshc: clang failed while building '{path}'");
+            if !result.stderr.is_empty() {
+                eprint!("{}", String::from_utf8_lossy(&result.stderr));
+            }
+            ExitCode::from(1)
+        }
+        Err(error) => {
+            eprintln!("moshc: could not run clang: {error}");
+            eprintln!("Install LLVM/Clang and ensure 'clang' is available on PATH.");
+            ExitCode::from(1)
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
@@ -212,6 +307,30 @@ fn main() -> ExitCode {
                 eprintln!("moshc: 'check' requires a source file path");
                 ExitCode::from(2)
             }
+        },
+        Some("build") => {
+            let Some(path) = args.next() else {
+                eprintln!("moshc: 'build' requires a source file path");
+                return ExitCode::from(2);
+            };
+            let mut output = None;
+            while let Some(argument) = args.next() {
+                if argument == "-o" {
+                    if output.is_some() {
+                        eprintln!("moshc: '-o' may only be supplied once");
+                        return ExitCode::from(2);
+                    }
+                    output = args.next();
+                    if output.is_none() {
+                        eprintln!("moshc: '-o' requires an output path");
+                        return ExitCode::from(2);
+                    }
+                } else {
+                    eprintln!("moshc: unexpected build argument '{argument}'");
+                    return ExitCode::from(2);
+                }
+            }
+            run_build(&path, output.as_deref())
         },
         Some(other) => {
             eprintln!("moshc: unsupported command or argument: {other}");
