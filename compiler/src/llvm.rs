@@ -181,13 +181,11 @@ fn function_locals(
                     )
                 });
                 if let Some(ty) = ty {
-                    if let Some(previous) = locals.insert(name.clone(), ty) {
-                        if previous != ty {
-                            errors.push(error(format!(
-                                "function '{}' shadows local '{}' with a different type; this backend version requires matching local types",
-                                function.name, name
-                            )));
-                        }
+                    if locals.insert(name.clone(), ty).is_some() {
+                        errors.push(error(format!(
+                            "function '{}' declares local '{}' more than once; this backend version does not yet support shadowed local storage",
+                            function.name, name
+                        )));
                     }
                 } else {
                     errors.push(error(format!(
@@ -380,16 +378,56 @@ impl<'a> FunctionEmitter<'a> {
                             (TokenKind::Ampersand, MirType::Int) => format!("and i64 {left}, {right}"),
                             (TokenKind::Pipe, MirType::Int) => format!("or i64 {left}, {right}"),
                             (TokenKind::Caret, MirType::Int) => format!("xor i64 {left}, {right}"),
-                            (TokenKind::Equal, MirType::Bool) => {
-                                let operand_ty = self.value_types.get(left_value_id(*left, *right, *operator, &self.values)).copied();
-                                let _ = operand_ty;
-                                format!("icmp eq i1 {left}, {right}")
-                            }
-                            (TokenKind::NotEqual, MirType::Bool) => format!("icmp ne i1 {left}, {right}"),
-                            (TokenKind::Less, MirType::Bool) if self.value_types.get(left).is_some_and(|t| *t == MirType::Float) => format!("fcmp olt double {left}, {right}"),
-                            (TokenKind::LessEqual, MirType::Bool) => format!("icmp sle i64 {left}, {right}"),
-                            (TokenKind::Greater, MirType::Bool) => format!("icmp sgt i64 {left}, {right}"),
-                            (TokenKind::GreaterEqual, MirType::Bool) => format!("icmp sge i64 {left}, {right}"),
+                            (TokenKind::Equal, MirType::Bool) => match left_type {
+                                Some(MirType::Int) => format!("icmp eq i64 {left}, {right}"),
+                                Some(MirType::Bool) => format!("icmp eq i1 {left}, {right}"),
+                                Some(MirType::Float) => format!("fcmp oeq double {left}, {right}"),
+                                _ => {
+                                    self.errors.push(error("string and Unit equality are not supported by this LLVM backend"));
+                                    return;
+                                }
+                            },
+                            (TokenKind::NotEqual, MirType::Bool) => match left_type {
+                                Some(MirType::Int) => format!("icmp ne i64 {left}, {right}"),
+                                Some(MirType::Bool) => format!("icmp ne i1 {left}, {right}"),
+                                Some(MirType::Float) => format!("fcmp one double {left}, {right}"),
+                                _ => {
+                                    self.errors.push(error("string and Unit inequality are not supported by this LLVM backend"));
+                                    return;
+                                }
+                            },
+                            (TokenKind::Less, MirType::Bool) => match left_type {
+                                Some(MirType::Int) => format!("icmp slt i64 {left}, {right}"),
+                                Some(MirType::Float) => format!("fcmp olt double {left}, {right}"),
+                                _ => {
+                                    self.errors.push(error("invalid comparison operand type"));
+                                    return;
+                                }
+                            },
+                            (TokenKind::LessEqual, MirType::Bool) => match left_type {
+                                Some(MirType::Int) => format!("icmp sle i64 {left}, {right}"),
+                                Some(MirType::Float) => format!("fcmp ole double {left}, {right}"),
+                                _ => {
+                                    self.errors.push(error("invalid comparison operand type"));
+                                    return;
+                                }
+                            },
+                            (TokenKind::Greater, MirType::Bool) => match left_type {
+                                Some(MirType::Int) => format!("icmp sgt i64 {left}, {right}"),
+                                Some(MirType::Float) => format!("fcmp ogt double {left}, {right}"),
+                                _ => {
+                                    self.errors.push(error("invalid comparison operand type"));
+                                    return;
+                                }
+                            },
+                            (TokenKind::GreaterEqual, MirType::Bool) => match left_type {
+                                Some(MirType::Int) => format!("icmp sge i64 {left}, {right}"),
+                                Some(MirType::Float) => format!("fcmp oge double {left}, {right}"),
+                                _ => {
+                                    self.errors.push(error("invalid comparison operand type"));
+                                    return;
+                                }
+                            },
                             _ => {
                                 self.errors.push(error(format!("unsupported binary operation {operator:?} in LLVM backend")));
                                 return;
@@ -478,17 +516,8 @@ impl<'a> FunctionEmitter<'a> {
                 Err(errors) => self.errors.extend(errors),
             },
             Terminator::Return(value) => {
-                let is_entry_main = self.function.name == "main";
                 match value {
                     Some(value) => match self.value(*value) {
-                        Ok(value) if is_entry_main && self.function.return_type == MirType::Int => {
-                            let _ = writeln!(self.output, "  %main.exit = trunc i64 {value} to i32");
-                            self.output.push_str("  ret i32 %main.exit\n");
-                        }
-                        Ok(value) if is_entry_main && self.function.return_type == MirType::Unit => {
-                            let _ = writeln!(self.output, "  ret i32 0");
-                            let _ = value;
-                        }
                         Ok(value) => {
                             let _ = writeln!(
                                 self.output,
@@ -498,7 +527,6 @@ impl<'a> FunctionEmitter<'a> {
                         }
                         Err(errors) => self.errors.extend(errors),
                     },
-                    None if is_entry_main => self.output.push_str("  ret i32 0\n"),
                     None => self.output.push_str("  ret void\n"),
                 }
             }
@@ -507,11 +535,7 @@ impl<'a> FunctionEmitter<'a> {
 
     fn emit(mut self) -> Result<String> {
         let symbol = function_symbol(&self.function.name);
-        let return_type = if self.function.name == "main" {
-            "i32"
-        } else {
-            llvm_type(self.function.return_type)
-        };
+        let return_type = llvm_type(self.function.return_type);
         let parameters = self.function.parameters.iter().enumerate()
             .map(|(index, parameter)| format!("{} %arg{index}", llvm_type(parameter.ty)))
             .collect::<Vec<_>>().join(", ");
@@ -605,6 +629,16 @@ pub fn generate(module: &MirModule) -> Result<String> {
     }
     output.push('\n');
     output.push_str(&bodies);
+    output.push_str("define i32 @main() {\nentry:\n");
+    if module.functions.iter().any(|function| function.name == "__mosh_init") {
+        output.push_str("  call void @mosh___mosh_init()\n");
+    }
+    if main.return_type == MirType::Int {
+        output.push_str("  %mosh.result = call i64 @mosh_user_main()\n  %mosh.exit = trunc i64 %mosh.result to i32\n  ret i32 %mosh.exit\n");
+    } else {
+        output.push_str("  call void @mosh_user_main()\n  ret i32 0\n");
+    }
+    output.push_str("}\n");
     Ok(output)
 }
 
