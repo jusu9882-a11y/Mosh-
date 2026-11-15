@@ -317,12 +317,25 @@ fn validate_value_dominance(function: &MirFunction, errors: &mut Vec<LowerError>
     }
 
     let mut definitions = HashMap::<ValueId, (usize, usize)>::new();
+    let mut bindings = HashMap::<String, Vec<(usize, Option<usize>, bool)>>::new();
+    for parameter in &function.parameters {
+        bindings
+            .entry(parameter.name.clone())
+            .or_default()
+            .push((0, None, false));
+    }
     for (block_index, block) in function.blocks.iter().enumerate() {
         for (instruction_index, instruction) in block.instructions.iter().enumerate() {
             if let Some(value) = instruction.result {
                 definitions
                     .entry(value)
                     .or_insert((block_index, instruction_index));
+            }
+            if let InstructionKind::Declare { name, mutable, .. } = &instruction.kind {
+                bindings
+                    .entry(name.clone())
+                    .or_default()
+                    .push((block_index, Some(instruction_index), *mutable));
             }
         }
     }
@@ -415,6 +428,52 @@ fn validate_value_dominance(function: &MirFunction, errors: &mut Vec<LowerError>
         }
         if !changed {
             break;
+        }
+    }
+
+    for (block_index, block) in function.blocks.iter().enumerate() {
+        for (instruction_index, instruction) in block.instructions.iter().enumerate() {
+            let binding_use = match &instruction.kind {
+                InstructionKind::Load { name } => Some((name, false)),
+                InstructionKind::Store { name, .. } => Some((name, true)),
+                _ => None,
+            };
+            let Some((name, requires_mutable)) = binding_use else {
+                continue;
+            };
+            let available = bindings.get(name).and_then(|candidates| {
+                candidates
+                    .iter()
+                    .filter(|(definition_block, definition_position, _)| {
+                        if *definition_block == block_index {
+                            definition_position.is_none_or(|position| position < instruction_index)
+                        } else {
+                            reachable[block_index]
+                                && reachable[*definition_block]
+                                && dominators[block_index].contains(definition_block)
+                        }
+                    })
+                    .max_by_key(|(definition_block, definition_position, _)| {
+                        (dominators[*definition_block].len(), definition_position.unwrap_or(0))
+                    })
+            });
+            match available {
+                None => errors.push(LowerError {
+                    message: format!(
+                        "MIR function '{}' reads or writes variable '{}' before declaration or outside its scope",
+                        function.name, name
+                    ),
+                    span: instruction.span,
+                }),
+                Some((_, _, false)) if requires_mutable => errors.push(LowerError {
+                    message: format!(
+                        "MIR function '{}' stores to immutable variable '{}'",
+                        function.name, name
+                    ),
+                    span: instruction.span,
+                }),
+                Some(_) => {}
+            }
         }
     }
 
@@ -1101,6 +1160,50 @@ mod tests {
         assert!(errors
             .iter()
             .any(|error| error.message.contains("dominance")));
+    }
+
+    #[test]
+    fn validator_rejects_loads_of_undeclared_or_out_of_scope_variables() {
+        let mut module = compile(
+            "function main(flag: Bool) -> Int:\n    if flag:\n        let local = 1\n    return 2\n",
+        )
+        .unwrap();
+        let merge = module.functions[0].blocks.last_mut().unwrap();
+        let span = merge.instructions.last().unwrap().span;
+        merge.instructions.insert(
+            0,
+            super::Instruction {
+                result: Some(super::ValueId(3)),
+                kind: InstructionKind::Load {
+                    name: "local".into(),
+                },
+                span,
+            },
+        );
+        let errors = super::validate(&module).unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains("outside its scope")));
+    }
+
+    #[test]
+    fn validator_rejects_stores_to_immutable_parameters() {
+        let mut module = compile("function main(value: Int) -> Unit:\n    return\n").unwrap();
+        let block = &mut module.functions[0].blocks[0];
+        let span = block.instructions[0].span;
+        block.instructions.push(super::Instruction {
+            result: Some(super::ValueId(1)),
+            kind: InstructionKind::Integer("7".into()),
+            span,
+        });
+        block.instructions.push(super::Instruction {
+            result: None,
+            kind: InstructionKind::Store {
+                name: "value".into(),
+                value: super::ValueId(1),
+            },
+            span,
+        });
+        let errors = super::validate(&module).unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains("stores to immutable")));
     }
 
     #[test]
