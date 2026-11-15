@@ -34,6 +34,22 @@ fn read_source(path: &str) -> Result<String, ExitCode> {
     })
 }
 
+fn parse_program(path: &str, tokens: &[lexer::Token]) -> Option<parser::Program> {
+    match parser::parse_recovering(tokens) {
+        Ok(output) if output.errors.is_empty() => Some(output.program),
+        Ok(output) => {
+            for error in output.errors {
+                eprintln!("moshc: {path}: {error}");
+            }
+            None
+        }
+        Err(error) => {
+            eprintln!("moshc: {path}: {error}");
+            None
+        }
+    }
+}
+
 fn run_lexer(path: &str) -> ExitCode {
     let source = match read_source(path) {
         Ok(s) => s,
@@ -73,15 +89,12 @@ fn run_parser(path: &str) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    match parser::parse(&tokens) {
-        Ok(program) => {
+    match parse_program(path, &tokens) {
+        Some(program) => {
             println!("{program:#?}");
             ExitCode::SUCCESS
         }
-        Err(error) => {
-            eprintln!("moshc: {path}: {error}");
-            ExitCode::from(1)
-        }
+        None => ExitCode::from(1),
     }
 }
 
@@ -97,12 +110,8 @@ fn run_checker(path: &str) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let program = match parser::parse(&tokens) {
-        Ok(program) => program,
-        Err(error) => {
-            eprintln!("moshc: {path}: {error}");
-            return ExitCode::from(1);
-        }
+    let Some(program) = parse_program(path, &tokens) else {
+        return ExitCode::from(1);
     };
     if let Err(errors) = semantic::analyze(&program) {
         for error in errors {
@@ -136,12 +145,8 @@ fn run_mir(path: &str) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let program = match parser::parse(&tokens) {
-        Ok(program) => program,
-        Err(error) => {
-            eprintln!("moshc: {path}: {error}");
-            return ExitCode::from(1);
-        }
+    let Some(program) = parse_program(path, &tokens) else {
+        return ExitCode::from(1);
     };
     if let Err(errors) = semantic::analyze(&program) {
         for error in errors {
