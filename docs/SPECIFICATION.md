@@ -220,7 +220,7 @@ A minimal runtime is preferred where practical. The language MUST distinguish co
 3. Lexer and parser.
 4. AST, name resolution, and diagnostics.
 5. Static type checker.
-6. Mosh IR.
+6. Initial Mosh Intermediate Representation (MIR) and control-flow lowering.
 7. LLVM integration and first native executable.
 8. Ownership and borrow checker.
 9. Unsafe operations and low-level memory model.
@@ -249,4 +249,4 @@ The following must be resolved before the language can be considered fully speci
 
 ## 13. Implementation status
 
-This document is a design draft. The lexer, parser, initial semantic name/scope checks, and first primitive static type checker are implemented with tests. The type checker currently covers the fixed version 0.1 primitive contract; iterable/compound types, ownership and borrow checking, runtime, LLVM backend, standard library, and native executable generation are not yet implemented.
+This document is a design draft. The lexer, parser, initial semantic name/scope checks, first primitive static type checker, and initial MIR lowering for functions, local bindings, expressions, if/else, while-loops, and returns are implemented with tests. The type checker currently covers the fixed version 0.1 primitive contract; for-loop lowering (pending iterable types), compound types, ownership and borrow checking, runtime, LLVM backend, standard library, and native executable generation are not yet implemented.

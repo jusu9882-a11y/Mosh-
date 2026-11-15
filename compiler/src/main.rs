@@ -1,4 +1,5 @@
 mod lexer;
+mod mir;
 mod parser;
 mod semantic;
 mod typecheck;
@@ -19,9 +20,11 @@ fn print_help() {
     println!("    moshc lex <source.mosh>");
     println!("    moshc parse <source.mosh>");
     println!("    moshc check <source.mosh>");
+    println!("    moshc mir <source.mosh>");
     println!();
     println!("The lex and parse commands are development tools.");
     println!("The check command runs parsing, name resolution, and static type checking.");
+    println!("The mir command lowers a checked program to the initial Mosh IR.");
 }
 
 fn read_source(path: &str) -> Result<String, ExitCode> {
@@ -93,6 +96,34 @@ fn run_checker(path: &str) -> ExitCode {
     }
 }
 
+
+fn run_mir(path: &str) -> ExitCode {
+    let source = match read_source(path) { Ok(s) => s, Err(code) => return code };
+    let tokens = match lexer::tokenize(&source) {
+        Ok(tokens) => tokens,
+        Err(error) => { eprintln!("moshc: {path}: {error}"); return ExitCode::from(1); }
+    };
+    let program = match parser::parse(&tokens) {
+        Ok(program) => program,
+        Err(error) => { eprintln!("moshc: {path}: {error}"); return ExitCode::from(1); }
+    };
+    if let Err(errors) = semantic::analyze(&program) {
+        for error in errors { eprintln!("moshc: {path}: {error}"); }
+        return ExitCode::from(1);
+    }
+    if let Err(errors) = typecheck::check(&program) {
+        for error in errors { eprintln!("moshc: {path}: {error}"); }
+        return ExitCode::from(1);
+    }
+    match mir::lower(&program) {
+        Ok(module) => { println!("{module:#?}"); ExitCode::SUCCESS }
+        Err(errors) => {
+            for error in errors { eprintln!("moshc: {path}: {error}"); }
+            ExitCode::from(1)
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
@@ -105,6 +136,10 @@ fn main() -> ExitCode {
         Some("parse") => match args.next() {
             Some(path) => run_parser(&path),
             None => { eprintln!("moshc: 'parse' requires a source file path"); ExitCode::from(2) }
+        },
+        Some("mir") => match args.next() {
+            Some(path) => run_mir(&path),
+            None => { eprintln!("moshc: mir requires a source file path"); ExitCode::from(2) }
         },
         Some("check") => match args.next() {
             Some(path) => run_checker(&path),
