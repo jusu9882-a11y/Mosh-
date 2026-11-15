@@ -361,6 +361,7 @@ impl<'a> FunctionEmitter<'a> {
                     self.errors.push(error("cannot infer binary expression type"));
                     return;
                 };
+                let left_type = self.value_types.get(left).copied();
                 let operands = self.value(*left).and_then(|left| self.value(*right).map(|right| (left, right)));
                 match operands {
                     Ok((left, right)) => {
@@ -659,9 +660,9 @@ mod tests {
     #[test]
     fn emits_native_llvm_for_arithmetic_main() {
         let ir = compile("function main() -> Int:\n    return 40 + 2\n").unwrap();
-        assert!(ir.contains("define i32 @mosh_user_main()"));
+        assert!(ir.contains("define i64 @mosh_user_main()"));
         assert!(ir.contains("add i64 40, 2"));
-        assert!(ir.contains("ret i32 %main.exit"));
+        assert!(ir.contains("trunc i64 %mosh.result to i32"));
     }
 
     #[test]
