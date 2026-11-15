@@ -137,10 +137,10 @@ pub fn validate(module: &MirModule) -> Result<(), Vec<LowerError>> {
                         function.name, block.id.0, index
                     ),
                     span: block
-                    .instructions
-                    .first()
-                    .map(|i| i.span)
-                    .unwrap_or_else(validation_span),
+                        .instructions
+                        .first()
+                        .map(|i| i.span)
+                        .unwrap_or_else(validation_span),
                 });
             }
             if block.terminator.is_none() {
@@ -215,10 +215,10 @@ pub fn validate(module: &MirModule) -> Result<(), Vec<LowerError>> {
                                     function.name, block.id.0, target.0
                                 ),
                                 span: block
-                                .instructions
-                                .last()
-                                .map(|i| i.span)
-                                .unwrap_or_else(validation_span),
+                                    .instructions
+                                    .last()
+                                    .map(|i| i.span)
+                                    .unwrap_or_else(validation_span),
                             });
                         }
                     }
@@ -243,10 +243,10 @@ pub fn validate(module: &MirModule) -> Result<(), Vec<LowerError>> {
                                         function.name, block.id.0, target.0
                                     ),
                                     span: block
-                                .instructions
-                                .last()
-                                .map(|i| i.span)
-                                .unwrap_or_else(validation_span),
+                                        .instructions
+                                        .last()
+                                        .map(|i| i.span)
+                                        .unwrap_or_else(validation_span),
                                 });
                             }
                         }
