@@ -252,16 +252,18 @@ impl Builder {
                 if self.function.return_type == MirType::Unit {
                     block.terminator = Some(Terminator::Return(None));
                 } else {
-                    let span = block.instructions.last().map(|instruction| instruction.span).unwrap_or(
-                        Span {
+                    let span = block
+                        .instructions
+                        .last()
+                        .map(|instruction| instruction.span)
+                        .unwrap_or(Span {
                             start: 0,
                             end: 0,
                             line: 1,
                             column: 1,
                             end_line: 1,
                             end_column: 1,
-                        },
-                    );
+                        });
                     self.errors.push(LowerError {
                         message: format!(
                             "non-Unit function '{}' can reach the end without returning a value",
@@ -375,10 +377,12 @@ impl Builder {
                 } else {
                     else_block
                 };
-                let then_terminated =
-                    self.function.blocks[then_end.0 as usize].terminator.is_some();
-                let else_terminated =
-                    self.function.blocks[else_end.0 as usize].terminator.is_some();
+                let then_terminated = self.function.blocks[then_end.0 as usize]
+                    .terminator
+                    .is_some();
+                let else_terminated = self.function.blocks[else_end.0 as usize]
+                    .terminator
+                    .is_some();
 
                 if then_terminated && else_terminated {
                     // Both paths leave control flow; a merge block would be unreachable.
@@ -600,7 +604,10 @@ mod tests {
         .unwrap();
         let function = &module.functions[0];
         assert_eq!(function.blocks.len(), 3);
-        assert!(function.blocks.iter().all(|block| block.terminator.is_some()));
+        assert!(function
+            .blocks
+            .iter()
+            .all(|block| block.terminator.is_some()));
         assert!(function.blocks.iter().all(|block| !matches!(
             block.terminator,
             Some(Terminator::Jump(target)) if target.0 as usize >= function.blocks.len()
@@ -626,9 +633,9 @@ mod tests {
         let program = parse(&tokens).unwrap();
         crate::semantic::analyze(&program).unwrap();
         let errors = lower(&program).unwrap_err();
-        assert!(errors.iter().any(|error| error.message.contains(
-            "can reach the end without returning a value"
-        )));
+        assert!(errors.iter().any(|error| error
+            .message
+            .contains("can reach the end without returning a value")));
     }
 
     #[test]
