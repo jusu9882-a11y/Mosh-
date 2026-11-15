@@ -286,6 +286,7 @@ pub fn validate(module: &MirModule) -> Result<(), Vec<LowerError>> {
         }
 
         validate_value_dominance(function, &mut errors);
+        validate_instruction_types(module, function, &mut errors);
 
         for (value, span) in uses {
             if !definitions.contains(&value) {
@@ -544,6 +545,273 @@ fn validate_value_dominance(function: &MirFunction, errors: &mut Vec<LowerError>
                 }
                 Terminator::Return(Some(value)) => {
                     check_use(*value, block_index, block.instructions.len(), span);
+                }
+                Terminator::Jump(_) | Terminator::Return(None) => {}
+            }
+        }
+    }
+}
+
+
+/// Check all type relationships that can be proven from MIR's explicit value
+/// producers and the module's function signatures. Loads remain unknown here
+/// because the initial MIR local-binding representation does not carry types.
+fn validate_instruction_types(
+    module: &MirModule,
+    function: &MirFunction,
+    errors: &mut Vec<LowerError>,
+) {
+    use std::collections::{HashMap, HashSet};
+
+    let mut signatures = HashMap::<String, (Vec<MirType>, MirType)>::new();
+    for candidate in &module.functions {
+        let signature = (
+            candidate.parameters.iter().map(|parameter| parameter.ty).collect(),
+            candidate.return_type,
+        );
+        if signatures.insert(candidate.name.clone(), signature).is_some() {
+            errors.push(LowerError {
+                message: format!("MIR module contains duplicate function '{}'", candidate.name),
+                span: validation_span(),
+            });
+        }
+    }
+
+    let mut definitions = HashMap::<ValueId, &Instruction>::new();
+    for block in &function.blocks {
+        for instruction in &block.instructions {
+            if let Some(value) = instruction.result {
+                definitions.entry(value).or_insert(instruction);
+            }
+        }
+    }
+
+    fn infer_type(
+        value: ValueId,
+        definitions: &HashMap<ValueId, &Instruction>,
+        signatures: &HashMap<String, (Vec<MirType>, MirType)>,
+        cache: &mut HashMap<ValueId, Option<MirType>>,
+        active: &mut HashSet<ValueId>,
+    ) -> Option<MirType> {
+        if let Some(cached) = cache.get(&value) {
+            return *cached;
+        }
+        if !active.insert(value) {
+            return None;
+        }
+        let inferred = definitions.get(&value).and_then(|instruction| {
+            match &instruction.kind {
+                InstructionKind::Integer(_) => Some(MirType::Int),
+                InstructionKind::Float(_) => Some(MirType::Float),
+                InstructionKind::String(_) => Some(MirType::String),
+                InstructionKind::Boolean(_) => Some(MirType::Bool),
+                InstructionKind::Load { .. } => None,
+                InstructionKind::Unary { operator, operand } => {
+                    let operand_type =
+                        infer_type(*operand, definitions, signatures, cache, active)?;
+                    match operator {
+                        TokenKind::Minus
+                            if matches!(operand_type, MirType::Int | MirType::Float) =>
+                        {
+                            Some(operand_type)
+                        }
+                        TokenKind::Bang if operand_type == MirType::Bool => Some(MirType::Bool),
+                        _ => None,
+                    }
+                }
+                InstructionKind::Binary { left, operator, right } => {
+                    let left_type = infer_type(*left, definitions, signatures, cache, active)?;
+                    let right_type = infer_type(*right, definitions, signatures, cache, active)?;
+                    binary_result_type(left_type, operator, right_type)
+                }
+                InstructionKind::Call { name, .. } if name == "print" => Some(MirType::Unit),
+                InstructionKind::Call { name, .. } => {
+                    signatures.get(name).map(|(_, result)| *result)
+                }
+                InstructionKind::Declare { .. } | InstructionKind::Store { .. } => None,
+            }
+        });
+        active.remove(&value);
+        cache.insert(value, inferred);
+        inferred
+    }
+
+    fn binary_result_type(
+        left: MirType,
+        operator: &TokenKind,
+        right: MirType,
+    ) -> Option<MirType> {
+        match operator {
+            TokenKind::Plus
+            | TokenKind::Minus
+            | TokenKind::Star
+            | TokenKind::Slash
+            | TokenKind::Percent
+                if left == right && matches!(left, MirType::Int | MirType::Float) =>
+            {
+                Some(left)
+            }
+            TokenKind::Less
+            | TokenKind::LessEqual
+            | TokenKind::Greater
+            | TokenKind::GreaterEqual
+                if left == right && matches!(left, MirType::Int | MirType::Float) =>
+            {
+                Some(MirType::Bool)
+            }
+            TokenKind::Equal | TokenKind::NotEqual if left == right && left != MirType::Unit => {
+                Some(MirType::Bool)
+            }
+            TokenKind::Ampersand | TokenKind::Pipe | TokenKind::Caret
+                if left == MirType::Int && right == MirType::Int =>
+            {
+                Some(MirType::Int)
+            }
+            _ => None,
+        }
+    }
+
+    let mut cache = HashMap::<ValueId, Option<MirType>>::new();
+    for block in &function.blocks {
+        for instruction in &block.instructions {
+            match &instruction.kind {
+                InstructionKind::Unary { operator, operand } => {
+                    if let Some(operand_type) =
+                        infer_type(*operand, &definitions, &signatures, &mut cache, &mut HashSet::new())
+                    {
+                        let valid = matches!(
+                            (operator, operand_type),
+                            (TokenKind::Minus, MirType::Int | MirType::Float)
+                                | (TokenKind::Bang, MirType::Bool)
+                        );
+                        if !valid {
+                            errors.push(LowerError {
+                                message: format!(
+                                    "MIR function '{}' applies an invalid unary operator to {:?}",
+                                    function.name, operand_type
+                                ),
+                                span: instruction.span,
+                            });
+                        }
+                    }
+                }
+                InstructionKind::Binary { left, operator, right } => {
+                    let left_type =
+                        infer_type(*left, &definitions, &signatures, &mut cache, &mut HashSet::new());
+                    let right_type =
+                        infer_type(*right, &definitions, &signatures, &mut cache, &mut HashSet::new());
+                    if let (Some(left_type), Some(right_type)) = (left_type, right_type) {
+                        if binary_result_type(left_type, operator, right_type).is_none() {
+                            errors.push(LowerError {
+                                message: format!(
+                                    "MIR function '{}' has incompatible {:?} operands for {:?}",
+                                    function.name, left_type, operator
+                                ),
+                                span: instruction.span,
+                            });
+                        }
+                    }
+                }
+                InstructionKind::Call { name, arguments } => {
+                    if name == "print" {
+                        continue;
+                    }
+                    match signatures.get(name) {
+                        None => errors.push(LowerError {
+                            message: format!(
+                                "MIR function '{}' calls unknown function '{}'",
+                                function.name, name
+                            ),
+                            span: instruction.span,
+                        }),
+                        Some((parameters, _)) => {
+                            if arguments.len() != parameters.len() {
+                                errors.push(LowerError {
+                                    message: format!(
+                                        "MIR call to '{}' expects {} argument(s), found {}",
+                                        name, parameters.len(), arguments.len()
+                                    ),
+                                    span: instruction.span,
+                                });
+                            }
+                            for (index, (argument, expected)) in
+                                arguments.iter().zip(parameters).enumerate()
+                            {
+                                if let Some(actual) = infer_type(
+                                    *argument,
+                                    &definitions,
+                                    &signatures,
+                                    &mut cache,
+                                    &mut HashSet::new(),
+                                ) {
+                                    if actual != *expected {
+                                        errors.push(LowerError {
+                                            message: format!(
+                                                "MIR call argument {} to '{}' has type {:?}, expected {:?}",
+                                                index + 1, name, actual, expected
+                                            ),
+                                            span: instruction.span,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                InstructionKind::Integer(_)
+                | InstructionKind::Float(_)
+                | InstructionKind::String(_)
+                | InstructionKind::Boolean(_)
+                | InstructionKind::Load { .. }
+                | InstructionKind::Declare { .. }
+                | InstructionKind::Store { .. } => {}
+            }
+        }
+
+        if let Some(terminator) = &block.terminator {
+            let span = block
+                .instructions
+                .last()
+                .map(|instruction| instruction.span)
+                .unwrap_or_else(validation_span);
+            match terminator {
+                Terminator::Branch { condition, .. } => {
+                    if let Some(actual) = infer_type(
+                        *condition,
+                        &definitions,
+                        &signatures,
+                        &mut cache,
+                        &mut HashSet::new(),
+                    ) {
+                        if actual != MirType::Bool {
+                            errors.push(LowerError {
+                                message: format!(
+                                    "MIR branch condition must be Bool, found {:?}",
+                                    actual
+                                ),
+                                span,
+                            });
+                        }
+                    }
+                }
+                Terminator::Return(Some(value)) => {
+                    if let Some(actual) = infer_type(
+                        *value,
+                        &definitions,
+                        &signatures,
+                        &mut cache,
+                        &mut HashSet::new(),
+                    ) {
+                        if actual != function.return_type {
+                            errors.push(LowerError {
+                                message: format!(
+                                    "MIR function '{}' returns {:?}, but declares {:?}",
+                                    function.name, actual, function.return_type
+                                ),
+                                span,
+                            });
+                        }
+                    }
                 }
                 Terminator::Jump(_) | Terminator::Return(None) => {}
             }
@@ -1164,6 +1432,42 @@ mod tests {
         assert!(errors
             .iter()
             .any(|error| error.message.contains("dominance")));
+    }
+
+    #[test]
+    fn validator_rejects_known_return_and_branch_type_mismatches() {
+        let mut module = compile("function main() -> Int:\n    return 1\n").unwrap();
+        module.functions[0].return_type = super::MirType::Bool;
+        let errors = super::validate(&module).unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains("returns Int")));
+
+        let mut module = compile(
+            "function main() -> Unit:\n    if true:\n        print(1)\n",
+        )
+        .unwrap();
+        let block = &mut module.functions[0].blocks[0];
+        let span = block.instructions[0].span;
+        block.instructions.push(super::Instruction {
+            result: Some(super::ValueId(1)),
+            kind: InstructionKind::Integer("9".into()),
+            span,
+        });
+        if let Some(Terminator::Branch { condition, .. }) = &mut block.terminator {
+            *condition = super::ValueId(1);
+        }
+        let errors = super::validate(&module).unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains("branch condition must be Bool")));
+    }
+
+    #[test]
+    fn validator_checks_call_signatures_and_argument_types() {
+        let mut module = compile(
+            "function consume(value: Int) -> Unit:\n    return\nfunction main() -> Unit:\n    consume(1)\n",
+        )
+        .unwrap();
+        module.functions[0].parameters[0].ty = super::MirType::Bool;
+        let errors = super::validate(&module).unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains("call argument 1")));
     }
 
     #[test]
