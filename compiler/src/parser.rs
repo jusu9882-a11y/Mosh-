@@ -369,7 +369,7 @@ mod tests {
         tokens.pop();
         let error = parse(&tokens).unwrap_err();
         assert!(error.message.contains("must end with EOF"));
-        assert_eq!(error.span.line, 2);
+        assert_eq!(error.span.line, 1);
     }
 
     #[test]
