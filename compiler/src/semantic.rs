@@ -12,7 +12,11 @@ pub struct SemanticError {
 
 impl fmt::Display for SemanticError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} at {}:{}", self.message, self.span.line, self.span.column)
+        write!(
+            f,
+            "{} at {}:{}",
+            self.message, self.span.line, self.span.column
+        )
     }
 }
 
@@ -82,20 +86,35 @@ impl Analyzer {
     }
 
     fn define(&mut self, name: &str, kind: SymbolKind) -> bool {
-        self.scopes.last_mut().expect("analyzer always has a scope").define(name, kind)
+        self.scopes
+            .last_mut()
+            .expect("analyzer always has a scope")
+            .define(name, kind)
     }
 
     fn lookup(&self, name: &str) -> Option<SymbolKind> {
-        self.scopes.iter().rev().find_map(|scope| scope.symbols.get(name).copied())
+        self.scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.symbols.get(name).copied())
     }
 
     fn error(&mut self, message: impl Into<String>, span: Span) {
-        self.errors.push(SemanticError { message: message.into(), span });
+        self.errors.push(SemanticError {
+            message: message.into(),
+            span,
+        });
     }
 
     fn statement(&mut self, statement: &Stmt) {
         match statement {
-            Stmt::Function { name, params, body, span, .. } => {
+            Stmt::Function {
+                name,
+                params,
+                body,
+                span,
+                ..
+            } => {
                 // Module functions were predeclared above. A nested function is
                 // introduced at its declaration point in the current scope.
                 if self.function_depth > 0 && !self.define(name, SymbolKind::Function) {
@@ -117,13 +136,22 @@ impl Analyzer {
                 self.function_depth -= 1;
                 self.pop_scope();
             }
-            Stmt::Let { name, mutable, value, span, .. } => {
+            Stmt::Let {
+                name,
+                mutable,
+                value,
+                span,
+                ..
+            } => {
                 // Initializers are evaluated before the new name enters scope.
                 if let Some(initializer) = value {
                     self.expression(initializer);
                 }
                 if !self.define(name, SymbolKind::Variable { mutable: *mutable }) {
-                    self.error(format!("duplicate declaration of '{name}' in the same scope"), *span);
+                    self.error(
+                        format!("duplicate declaration of '{name}' in the same scope"),
+                        *span,
+                    );
                 }
             }
             Stmt::Return { value, span } => {
@@ -134,18 +162,30 @@ impl Analyzer {
                     self.expression(value);
                 }
             }
-            Stmt::If { condition, then_body, else_body, .. } => {
+            Stmt::If {
+                condition,
+                then_body,
+                else_body,
+                ..
+            } => {
                 self.expression(condition);
                 self.block(then_body);
                 if let Some(body) = else_body {
                     self.block(body);
                 }
             }
-            Stmt::While { condition, body, .. } => {
+            Stmt::While {
+                condition, body, ..
+            } => {
                 self.expression(condition);
                 self.block(body);
             }
-            Stmt::For { name, iterable, body, span } => {
+            Stmt::For {
+                name,
+                iterable,
+                body,
+                span,
+            } => {
                 // The iterable is evaluated outside the loop-variable scope.
                 self.expression(iterable);
                 self.push_scope();
@@ -178,7 +218,10 @@ impl Analyzer {
             Expr::Identifier { name, span } => match self.lookup(name) {
                 None => self.error(format!("use of undefined name '{name}'"), *span),
                 Some(SymbolKind::Variable { mutable: false }) => {
-                    self.error(format!("cannot assign to immutable binding '{name}'"), *span);
+                    self.error(
+                        format!("cannot assign to immutable binding '{name}'"),
+                        *span,
+                    );
                 }
                 Some(SymbolKind::Variable { mutable: true }) => {}
                 Some(SymbolKind::Function) => {
@@ -209,7 +252,9 @@ impl Analyzer {
                 self.expression(left);
                 self.expression(right);
             }
-            Expr::Call { callee, arguments, .. } => {
+            Expr::Call {
+                callee, arguments, ..
+            } => {
                 if let Expr::Identifier { name, span } = callee.as_ref() {
                     // print is the compiler's initial built-in output function.
                     if name != "print" && self.lookup(name).is_none() {
@@ -230,7 +275,9 @@ impl Analyzer {
                 self.expression(object);
                 self.expression(index);
             }
-            Expr::Integer { .. } | Expr::Float { .. } | Expr::String { .. }
+            Expr::Integer { .. }
+            | Expr::Float { .. }
+            | Expr::String { .. }
             | Expr::Boolean { .. } => {}
         }
     }
@@ -238,9 +285,15 @@ impl Analyzer {
 
 fn expr_span(expression: &Expr) -> Span {
     match expression {
-        Expr::Identifier { span, .. } | Expr::Integer { span, .. } | Expr::Float { span, .. }
-        | Expr::String { span, .. } | Expr::Boolean { span, .. } | Expr::Unary { span, .. }
-        | Expr::Binary { span, .. } | Expr::Call { span, .. } | Expr::Member { span, .. }
+        Expr::Identifier { span, .. }
+        | Expr::Integer { span, .. }
+        | Expr::Float { span, .. }
+        | Expr::String { span, .. }
+        | Expr::Boolean { span, .. }
+        | Expr::Unary { span, .. }
+        | Expr::Binary { span, .. }
+        | Expr::Call { span, .. }
+        | Expr::Member { span, .. }
         | Expr::Index { span, .. } => *span,
     }
 }
@@ -260,30 +313,38 @@ mod tests {
 
     #[test]
     fn permits_forward_calls_and_mutual_recursion() {
-        assert!(checked(
-            "function first():\n    second()\nfunction second():\n    first()\n"
-        ).is_ok());
+        assert!(
+            checked("function first():\n    second()\nfunction second():\n    first()\n").is_ok()
+        );
     }
 
     #[test]
     fn rejects_undefined_variables_and_functions() {
-        let errors = checked(
-            "function main():\n    print(missing)\n    absent()\n"
-        ).unwrap_err();
-        assert!(errors.iter().any(|e| e.message.contains("undefined name 'missing'")));
-        assert!(errors.iter().any(|e| e.message.contains("undefined function 'absent'")));
+        let errors = checked("function main():\n    print(missing)\n    absent()\n").unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|e| e.message.contains("undefined name 'missing'")));
+        assert!(errors
+            .iter()
+            .any(|e| e.message.contains("undefined function 'absent'")));
     }
 
     #[test]
     fn rejects_use_before_declaration() {
-        let errors = checked("function main():\n    print(value)\n    let value = 3\n").unwrap_err();
-        assert!(errors.iter().any(|e| e.message.contains("undefined name 'value'")));
+        let errors =
+            checked("function main():\n    print(value)\n    let value = 3\n").unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|e| e.message.contains("undefined name 'value'")));
     }
 
     #[test]
     fn rejects_duplicate_names_in_one_scope() {
-        let errors = checked("function main():\n    let value = 1\n    let value = 2\n").unwrap_err();
-        assert!(errors.iter().any(|e| e.message.contains("duplicate declaration of 'value'")));
+        let errors =
+            checked("function main():\n    let value = 1\n    let value = 2\n").unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|e| e.message.contains("duplicate declaration of 'value'")));
     }
 
     #[test]
@@ -295,34 +356,45 @@ mod tests {
 
     #[test]
     fn block_variables_do_not_escape_their_block() {
-        let errors = checked(
-            "function main():\n    if true:\n        let hidden = 1\n    print(hidden)\n"
-        ).unwrap_err();
-        assert!(errors.iter().any(|e| e.message.contains("undefined name 'hidden'")));
+        let errors =
+            checked("function main():\n    if true:\n        let hidden = 1\n    print(hidden)\n")
+                .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|e| e.message.contains("undefined name 'hidden'")));
     }
 
     #[test]
     fn loop_variable_is_visible_only_inside_the_loop() {
-        assert!(checked("function main():\n    for item in items:\n        print(item)\n").is_err());
+        assert!(
+            checked("function main():\n    for item in items:\n        print(item)\n").is_err()
+        );
         assert!(checked(
             "function main():\n    let items = 1\n    for item in items:\n        print(item)\n"
-        ).is_ok());
+        )
+        .is_ok());
         let errors = checked(
             "function main():\n    let items = 1\n    for item in items:\n        print(item)\n    print(item)\n"
         ).unwrap_err();
-        assert!(errors.iter().any(|e| e.message.contains("undefined name 'item'")));
+        assert!(errors
+            .iter()
+            .any(|e| e.message.contains("undefined name 'item'")));
     }
 
     #[test]
     fn rejects_return_outside_a_function() {
         let errors = checked("return 1\n").unwrap_err();
-        assert!(errors.iter().any(|e| e.message.contains("only valid inside a function")));
+        assert!(errors
+            .iter()
+            .any(|e| e.message.contains("only valid inside a function")));
     }
 
     #[test]
     fn rejects_assignment_to_immutable_bindings() {
         let errors = checked("function main():\n    let count = 0\n    count = 1\n").unwrap_err();
-        assert!(errors.iter().any(|e| e.message.contains("immutable binding 'count'")));
+        assert!(errors
+            .iter()
+            .any(|e| e.message.contains("immutable binding 'count'")));
     }
 
     #[test]
@@ -333,7 +405,10 @@ mod tests {
     #[test]
     fn reports_source_location_for_semantic_errors() {
         let errors = checked("function main():\n    print(unknown)\n").unwrap_err();
-        let error = errors.iter().find(|e| e.message.contains("unknown")).unwrap();
+        let error = errors
+            .iter()
+            .find(|e| e.message.contains("unknown"))
+            .unwrap();
         assert_eq!(error.span.line, 2);
         assert!(error.span.column > 1);
     }
@@ -341,6 +416,8 @@ mod tests {
     #[test]
     fn rejects_duplicate_parameter_names() {
         let errors = checked("function main(value: Int, value: Int):\n    return\n").unwrap_err();
-        assert!(errors.iter().any(|e| e.message.contains("duplicate parameter name 'value'")));
+        assert!(errors
+            .iter()
+            .any(|e| e.message.contains("duplicate parameter name 'value'")));
     }
 }
