@@ -756,7 +756,9 @@ mod tests {
             }
             _ => panic!("expected function"),
         }
-        assert!(matches!(&output.program.statements[1], Stmt::Let { name, .. } if name == "outside"));
+        assert!(
+            matches!(&output.program.statements[1], Stmt::Let { name, .. } if name == "outside")
+        );
     }
 
     #[test]
