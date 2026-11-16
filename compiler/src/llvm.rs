@@ -389,6 +389,23 @@ impl<'a> FunctionEmitter<'a> {
                 };
                 match self.value(*operand) {
                     Ok(value) => {
+                        if left_type == Some(MirType::String)
+                            && matches!(operator, TokenKind::Equal | TokenKind::NotEqual)
+                        {
+                            let _ = writeln!(
+                                self.output,
+                                "  %str.cmp.{} = call i32 @strcmp(ptr {}, ptr {})",
+                                id.0, left, right
+                            );
+                            let predicate = if *operator == TokenKind::Equal { "eq" } else { "ne" };
+                            let _ = writeln!(
+                                self.output,
+                                "  %v{} = icmp {} i32 %str.cmp.{}, 0",
+                                id.0, predicate, id.0
+                            );
+                            self.values.insert(id, format!("%v{}", id.0));
+                            return;
+                        }
                         let op = match (operator, ty) {
                             (TokenKind::Minus, MirType::Int) => format!("sub i64 0, {value}"),
                             (TokenKind::Minus, MirType::Float) => format!("fneg double {value}"),
@@ -725,7 +742,7 @@ pub fn generate(module: &MirModule) -> Result<String> {
     if let Err(errors) = validate(module) {
         return Err(errors
             .into_iter()
-            .map(|error| error(error.message))
+            .map(|issue| error(issue.message))
             .collect());
     }
     let signatures = collect_signatures(module);
@@ -759,11 +776,17 @@ pub fn generate(module: &MirModule) -> Result<String> {
         .iter()
         .find(|function| function.name == "main")
         .unwrap();
+    if !main.parameters.is_empty() {
+        return Err(vec![error("main must not declare parameters")]);
+    }
     if !matches!(main.return_type, MirType::Int | MirType::Unit) {
         return Err(vec![error("main must return Int or Unit")]);
     }
+    if module.functions.iter().filter(|function| function.name == "__mosh_init").count() > 1 {
+        return Err(vec![error("the function name '__mosh_init' is reserved for module initialization")]);
+    }
 
-    let mut output = String::from("declare i32 @printf(ptr, ...)\n\n");
+    let mut output = String::from("declare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\n\n");
     for (value, index) in &strings {
         let _ = writeln!(
             output,
@@ -832,6 +855,47 @@ mod tests {
         .unwrap();
         assert!(ir.contains("br i1 true, label %bb"));
         assert!(ir.contains("ret i32 1"));
+    }
+
+    #[test]
+    fn emits_string_comparisons_and_native_string_output() {
+        let ir = compile(
+            "function main() -> Unit:\n    let greeting = \"hello\"\n    if greeting == \"hello\":\n        print(greeting)\n",
+        )
+        .unwrap();
+        assert!(ir.contains("@strcmp"));
+        assert!(ir.contains("@printf"));
+        assert!(ir.contains("icmp eq i32"));
+    }
+
+    #[test]
+    fn generated_llvm_is_accepted_by_clang() {
+        use std::process::Command;
+
+        let ir = compile(
+            "function add(a: Int, b: Int) -> Int:\n    return a + b\nfunction main() -> Int:\n    return add(20, 22)\n",
+        )
+        .unwrap();
+        let base = std::env::temp_dir().join(format!("mosh-llvm-smoke-{}", std::process::id()));
+        let ir_path = base.with_extension("ll");
+        let object_path = base.with_extension("o");
+        std::fs::write(&ir_path, ir).unwrap();
+        let result = Command::new("clang")
+            .arg("-x")
+            .arg("ir")
+            .arg("-c")
+            .arg(&ir_path)
+            .arg("-o")
+            .arg(&object_path)
+            .output()
+            .expect("clang must be installed for the LLVM backend test");
+        let _ = std::fs::remove_file(&ir_path);
+        let _ = std::fs::remove_file(&object_path);
+        assert!(
+            result.status.success(),
+            "clang rejected generated LLVM IR: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
     }
 
     #[test]
