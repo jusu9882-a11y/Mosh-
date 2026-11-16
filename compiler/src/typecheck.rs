@@ -566,8 +566,53 @@ impl Checker {
                             }
                         }
                     }
+                } else if let Expr::Member {
+                    object,
+                    name: field_name,
+                    span: target_span,
+                } = target
+                {
+                    let target_type = self.expression(target);
+                    self.expect_type(
+                        actual,
+                        target_type,
+                        *span,
+                        "field assignment type mismatch",
+                    );
+
+                    if let Expr::Identifier {
+                        name: root_name,
+                        span: root_span,
+                    } = object.as_ref()
+                    {
+                        if let Some(variable) = self.lookup(root_name) {
+                            if !variable.mutable {
+                                self.error(
+                                    format!(
+                                        "cannot assign to field '{field_name}' of immutable binding '{root_name}'"
+                                    ),
+                                    *root_span,
+                                );
+                            } else if actual != Type::Unknown && actual == target_type {
+                                self.consume_if_owned(value, actual);
+                                if actual == Type::String {
+                                    let place = Place::new(variable.ownership_id.to_string())
+                                        .field(field_name.clone());
+                                    if let Err(error) = self.ownership.assign(place) {
+                                        self.ownership_error(error, *target_span);
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        self.error(
+                            "field assignment currently requires a named local structure value",
+                            *target_span,
+                        );
+                    }
                 } else {
-                    // Member/index assignment needs compound types and is deferred.
+                    // Index assignment remains unavailable until collection types
+                    // have been added to the typed AST and MIR.
                     let _ = self.expression(target);
                 }
             }
@@ -1115,6 +1160,26 @@ mod tests {
             .unwrap_err()
             .iter()
             .any(|error| error.message.contains("before it is initialized")));
+    }
+
+    #[test]
+    fn checks_mutable_structure_field_assignment_types() {
+        let source = "struct Point:\n    x: Int\n    y: Int\nfunction main():\n    mut point = Point { x: 1, y: 2 }\n    point.x = 3\n    return\n";
+        assert!(checked(source).is_ok());
+        let mismatch = "struct Point:\n    x: Int\nfunction main():\n    mut point = Point { x: 1 }\n    point.x = \"wrong\"\n    return\n";
+        assert!(checked(mismatch)
+            .unwrap_err()
+            .iter()
+            .any(|error| error.message.contains("field assignment type mismatch")));
+    }
+
+    #[test]
+    fn rejects_assignment_to_field_of_immutable_structure_binding() {
+        let source = "struct Point:\n    x: Int\nfunction main():\n    let point = Point { x: 1 }\n    point.x = 3\n    return\n";
+        assert!(checked(source)
+            .unwrap_err()
+            .iter()
+            .any(|error| error.message.contains("field 'x' of immutable binding 'point'")));
     }
 
     #[test]
