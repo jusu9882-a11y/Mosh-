@@ -451,7 +451,11 @@ impl<'a> FunctionEmitter<'a> {
                                 "  %str.cmp.{} = call i32 @strcmp(ptr {}, ptr {})",
                                 id.0, left, right
                             );
-                            let predicate = if *operator == TokenKind::Equal { "eq" } else { "ne" };
+                            let predicate = if *operator == TokenKind::Equal {
+                                "eq"
+                            } else {
+                                "ne"
+                            };
                             let _ = writeln!(
                                 self.output,
                                 "  %v{} = icmp {} i32 %str.cmp.{}, 0",
@@ -556,7 +560,8 @@ impl<'a> FunctionEmitter<'a> {
                 let mut rendered_arguments = Vec::new();
                 for argument in arguments {
                     let Some(ty) = self.value_types.get(argument).copied() else {
-                        self.errors.push(error("cannot determine print argument type"));
+                        self.errors
+                            .push(error("cannot determine print argument type"));
                         return;
                     };
                     let value = match self.value(*argument) {
@@ -590,10 +595,8 @@ impl<'a> FunctionEmitter<'a> {
                                 "  %print.bool.{call_id}.{} = zext i1 {value} to i32",
                                 argument.0
                             );
-                            rendered_arguments.push(format!(
-                                "i32 %print.bool.{call_id}.{}",
-                                argument.0
-                            ));
+                            rendered_arguments
+                                .push(format!("i32 %print.bool.{call_id}.{}", argument.0));
                         }
                         MirType::Unit => {
                             self.errors.push(error("cannot print a Unit value"));
@@ -890,10 +893,8 @@ mod tests {
 
     #[test]
     fn print_accepts_multiple_primitive_arguments() {
-        let ir = compile(
-            "function main() -> Unit:\n    print(\"value\", 42, true, 3.5)\n",
-        )
-        .unwrap();
+        let ir =
+            compile("function main() -> Unit:\n    print(\"value\", 42, true, 3.5)\n").unwrap();
         assert!(ir.contains("%s %lld %d %g"));
         assert!(ir.contains("i64 42"));
         assert!(ir.contains("double 3.50000000000000000e0"));
