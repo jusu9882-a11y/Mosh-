@@ -732,7 +732,7 @@ mod tests {
 
     #[test]
     fn for_loop_assignment_is_not_assumed_to_execute() {
-        let source = "function main() -> Int:\n    mut value: Int\n    for item in range(1):\n        value = item\n    return value\n";
+        let source = "function main() -> Int:\n    mut value: Int\n    for item in 1:\n        value = item\n    return value\n";
         assert!(checked(source)
             .unwrap_err()
             .iter()
