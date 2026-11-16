@@ -120,7 +120,6 @@ impl fmt::Debug for Allocation {
         f.debug_struct("Allocation")
             .field("size", &self.size())
             .field("align", &self.align())
-            
             .finish()
     }
 }
