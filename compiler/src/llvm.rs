@@ -1242,7 +1242,8 @@ mod tests {
             "function fib(n: Int) -> Int:\n    if n <= 1:\n        return n\n    return fib(n - 1) + fib(n - 2)\nfunction main() -> Int:\n    print(fib(10))\n    return 0\n",
         )
         .unwrap();
-        let base = std::env::temp_dir().join(format!("mosh-recursion-smoke-{}", std::process::id()));
+        let base =
+            std::env::temp_dir().join(format!("mosh-recursion-smoke-{}", std::process::id()));
         let ir_path = base.with_extension("ll");
         let executable = base.with_extension("bin");
         std::fs::write(&ir_path, ir).unwrap();
