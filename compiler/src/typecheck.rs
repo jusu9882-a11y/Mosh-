@@ -731,6 +731,15 @@ mod tests {
     }
 
     #[test]
+    fn for_loop_assignment_is_not_assumed_to_execute() {
+        let source = "function main() -> Int:\n    mut value: Int\n    for item in range(1):\n        value = item\n    return value\n";
+        assert!(checked(source)
+            .unwrap_err()
+            .iter()
+            .any(|error| error.message.contains("before it is initialized")));
+    }
+
+    #[test]
     fn loop_body_assignment_is_not_assumed_to_execute() {
         let source = "function main() -> Int:\n    mut value: Int\n    while false:\n        value = 1\n    return value\n";
         assert!(checked(source)
