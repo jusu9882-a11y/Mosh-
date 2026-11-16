@@ -990,7 +990,6 @@ impl<'a> FunctionEmitter<'a> {
     }
 }
 
-
 /// Generate textual LLVM IR for the currently supported primitive MIR subset.
 pub fn generate(module: &MirModule) -> Result<String> {
     if let Err(errors) = validate(module) {
@@ -1016,8 +1015,14 @@ pub fn generate(module: &MirModule) -> Result<String> {
         return Err(errors);
     }
 
-    let Some(main) = module.functions.iter().find(|function| function.name == "main") else {
-        return Err(vec![error("native executable requires a function named 'main'")]);
+    let Some(main) = module
+        .functions
+        .iter()
+        .find(|function| function.name == "main")
+    else {
+        return Err(vec![error(
+            "native executable requires a function named 'main'",
+        )]);
     };
     if !main.parameters.is_empty() {
         return Err(vec![error("main must not declare parameters")]);
