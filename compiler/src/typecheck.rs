@@ -454,12 +454,7 @@ impl Checker {
                                 *target_span,
                             );
                         }
-                        self.expect_type(
-                            actual,
-                            variable.ty,
-                            *span,
-                            "assignment type mismatch",
-                        );
+                        self.expect_type(actual, variable.ty, *span, "assignment type mismatch");
                         if variable.mutable && actual != Type::Unknown {
                             if let Some(binding) = self
                                 .scopes
