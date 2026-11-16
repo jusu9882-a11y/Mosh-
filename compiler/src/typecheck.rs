@@ -332,14 +332,44 @@ impl Checker {
                 body,
                 span,
             } => {
-                // Iterable/collection types are deliberately outside this first
-                // primitive-type milestone. Name resolution still validates it.
-                let _ = self.expression(iterable);
+                match iterable {
+                    Expr::Call {
+                        callee,
+                        arguments,
+                        span: call_span,
+                    } if matches!(
+                        callee.as_ref(),
+                        Expr::Identifier { name, .. } if name == "range"
+                    ) => {
+                        if !(1..=2).contains(&arguments.len()) {
+                            self.error(
+                                "range() expects one or two Int arguments",
+                                *call_span,
+                            );
+                        }
+                        for argument in arguments {
+                            let actual = self.expression(argument);
+                            self.expect_type(
+                                actual,
+                                Type::Int,
+                                expr_span(argument),
+                                "range() arguments must be Int",
+                            );
+                        }
+                    }
+                    _ => {
+                        self.expression(iterable);
+                        self.error(
+                            "for-loop iterable must be range(end) or range(start, end)",
+                            *span,
+                        );
+                    }
+                }
                 self.push_scope();
                 self.define(
                     name,
                     Variable {
-                        ty: Type::Unknown,
+                        ty: Type::Int,
                         mutable: false,
                     },
                     *span,
