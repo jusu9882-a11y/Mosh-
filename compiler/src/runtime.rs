@@ -71,7 +71,6 @@ impl fmt::Display for RuntimeTypeAllocationError {
 
 impl std::error::Error for RuntimeTypeAllocationError {}
 
-
 /// A pluggable allocator for Mosh runtime memory.
 ///
 /// # Safety
@@ -152,8 +151,7 @@ impl Allocation {
         // SAFETY: layout is valid and non-zero-sized; the allocator contract
         // guarantees a unique allocation with this exact layout.
         let raw = unsafe { allocator.allocate(layout) };
-        let pointer =
-            NonNull::new(raw).ok_or(AllocationError::OutOfMemory { size, align })?;
+        let pointer = NonNull::new(raw).ok_or(AllocationError::OutOfMemory { size, align })?;
 
         // SAFETY: raw points to physical_size writable bytes as guaranteed by
         // the allocator contract.
