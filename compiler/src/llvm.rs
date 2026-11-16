@@ -970,6 +970,41 @@ mod tests {
     }
 
     #[test]
+    fn native_executable_runs_mutable_while_loop() {
+        use std::process::Command;
+
+        let ir = compile(
+            "function main() -> Int:\n    let mut count: Int = 0\n    while count < 3:\n        count = count + 1\n    print(count)\n    return 0\n",
+        )
+        .unwrap();
+        let base = std::env::temp_dir().join(format!("mosh-loop-smoke-{}", std::process::id()));
+        let ir_path = base.with_extension("ll");
+        let executable = base.with_extension("bin");
+        std::fs::write(&ir_path, ir).unwrap();
+        let compiled = Command::new("clang")
+            .arg("-x")
+            .arg("ir")
+            .arg("-O0")
+            .arg(&ir_path)
+            .arg("-o")
+            .arg(&executable)
+            .output()
+            .expect("clang must be installed for the native backend test");
+        assert!(
+            compiled.status.success(),
+            "clang rejected generated loop LLVM IR: {}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executed = Command::new(&executable)
+            .output()
+            .expect("generated loop executable should run");
+        let _ = std::fs::remove_file(&ir_path);
+        let _ = std::fs::remove_file(&executable);
+        assert!(executed.status.success());
+        assert_eq!(String::from_utf8_lossy(&executed.stdout), "3\n");
+    }
+
+    #[test]
     fn rejects_main_with_an_unsupported_return_type() {
         let source = "function main() -> Bool:\n    return true\n";
         assert!(compile(source).is_err());
