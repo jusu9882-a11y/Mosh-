@@ -62,6 +62,7 @@ jobs:
           path: |
             compiler/target/release/moshc
             README.md
+            TESTING.md
             docs/SPECIFICATION.md
             examples/*.mosh
           if-no-files-found: error
