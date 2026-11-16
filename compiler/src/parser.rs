@@ -533,7 +533,7 @@ impl<'a> Parser<'a> {
                 span: token.span,
             }),
             TokenKind::String => Ok(Expr::String {
-                value: token.lexeme,
+                value: decode_string_literal(&token.lexeme),
                 span: token.span,
             }),
             TokenKind::True => Ok(Expr::Boolean {
@@ -689,6 +689,35 @@ fn precedence(kind: &TokenKind) -> Option<(u8, bool)> {
     Some((p, false))
 }
 
+
+fn decode_string_literal(raw: &str) -> String {
+    let Some(body) = raw.get(1..raw.len().saturating_sub(1)) else {
+        return String::new();
+    };
+    let mut characters = body.chars();
+    let mut decoded = String::with_capacity(body.len());
+    while let Some(character) = characters.next() {
+        if character != '\\' {
+            decoded.push(character);
+            continue;
+        }
+        let Some(escaped) = characters.next() else {
+            break;
+        };
+        decoded.push(match escaped {
+            'n' => '\n',
+            'r' => '\r',
+            't' => '\t',
+            '0' => '\0',
+            '\\' => '\\',
+            '"' => '"',
+            '\'' => '\'',
+            other => other,
+        });
+    }
+    decoded
+}
+
 fn expr_span(expr: &Expr) -> Span {
     match expr {
         Expr::Identifier { span, .. }
@@ -833,6 +862,19 @@ mod tests {
             }
             _ => panic!("expected variable declaration"),
         }
+    }
+
+    #[test]
+    fn decodes_string_literal_quotes_and_escape_sequences() {
+        let program = parsed(r#"let message = "hello\\n\\\"mosh\\\"\\\\world""#).unwrap();
+        let Stmt::Let {
+            value: Some(Expr::String { value, .. }),
+            ..
+        } = &program.statements[0]
+        else {
+            panic!("expected a string binding");
+        };
+        assert_eq!(value, "hello\n\\"mosh\\"\\world");
     }
 
     #[test]
