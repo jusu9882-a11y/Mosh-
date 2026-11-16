@@ -238,7 +238,11 @@ impl Checker {
                         }
                         self.define(
                             &parameter.name,
-                            Variable { ty, mutable: false, initialized: true },
+                            Variable {
+                                ty,
+                                mutable: false,
+                                initialized: true,
+                            },
                             parameter.span,
                         );
                     }
@@ -700,11 +704,11 @@ mod tests {
 
     #[test]
     fn rejects_reading_a_local_before_initialization() {
-        let errors = checked(
-            "function main() -> Int:\n    mut value: Int\n    return value\n",
-        )
-        .unwrap_err();
-        assert!(errors.iter().any(|error| error.message.contains("before it is initialized")));
+        let errors =
+            checked("function main() -> Int:\n    mut value: Int\n    return value\n").unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("before it is initialized")));
     }
 
     #[test]
