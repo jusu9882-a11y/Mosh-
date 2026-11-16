@@ -400,10 +400,7 @@ impl Checker {
                 self.ownership = match (then_returns, else_returns, else_body.is_some()) {
                     (true, _, false) | (true, false, true) => ownership_after_else,
                     (false, true, true) => ownership_after_then,
-                    _ => OwnershipState::join(&[
-                        &ownership_after_then,
-                        &ownership_after_else,
-                    ]),
+                    _ => OwnershipState::join(&[&ownership_after_then, &ownership_after_else]),
                 };
                 for (scope_index, scope) in self.scopes.iter_mut().enumerate() {
                     for (name, variable) in &mut scope.variables {
@@ -922,6 +919,12 @@ mod tests {
         assert!(errors
             .iter()
             .any(|error| error.message.contains("use of moved value")));
+    }
+
+    #[test]
+    fn a_returning_if_branch_does_not_poison_the_continuing_string_path() {
+        let source = "function main(flag: Bool):\n    let text: String = \"still live\"\n    if flag:\n        return\n    print(text)\n    return\n";
+        assert!(checked(source).is_ok());
     }
 
     #[test]
