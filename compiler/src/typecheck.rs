@@ -563,11 +563,13 @@ impl Checker {
                     self.expression(value);
                 }
                 self.error(
-                    format!("structure value '{name}' is not yet supported by native type lowering"),
+                    format!(
+                        "structure value '{name}' is not yet supported by native type lowering"
+                    ),
                     *span,
                 );
                 Type::Unknown
-            },
+            }
             Expr::Identifier { name, span } => match self.lookup(name) {
                 Some(variable) => {
                     if !variable.initialized {
@@ -849,23 +851,30 @@ mod tests {
     fn accepts_module_scope_struct_declarations_with_primitive_fields() {
         assert!(checked(
             "struct Point:\n    x: Float\n    y: Float\nfunction main():\n    return\n"
-        ).is_ok());
+        )
+        .is_ok());
     }
 
     #[test]
     fn rejects_unknown_struct_field_types() {
         let errors = checked(
-            "struct Point:\n    x: MissingType\nfunction main():\n    return\n"
-        ).unwrap_err();
-        assert!(errors.iter().any(|error| error.message.contains("unknown type 'MissingType'")));
+            "struct Point:\n    x: MissingType\nfunction main():\n    return\n",
+        )
+        .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("unknown type 'MissingType'")));
     }
 
     #[test]
     fn rejects_struct_value_lowering_until_native_aggregate_support_exists() {
         let errors = checked(
-            "struct Point:\n    x: Int\nfunction main():\n    let point = Point { x: 1 }\n    return\n"
-        ).unwrap_err();
-        assert!(errors.iter().any(|error| error.message.contains("not yet supported by native type lowering")));
+            "struct Point:\n    x: Int\nfunction main():\n    let point = Point { x: 1 }\n    return\n",
+        )
+        .unwrap_err();
+        assert!(errors.iter().any(|error| error
+            .message
+            .contains("not yet supported by native type lowering")));
     }
 
     #[test]
