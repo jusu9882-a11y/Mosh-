@@ -23,7 +23,10 @@ pub struct Place {
 
 impl Place {
     pub fn new(root: impl Into<String>) -> Self {
-        Self { root: root.into(), projections: Vec::new() }
+        Self {
+            root: root.into(),
+            projections: Vec::new(),
+        }
     }
 
     pub fn field(mut self, name: impl Into<String>) -> Self {
@@ -86,11 +89,33 @@ impl fmt::Display for OwnershipError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UseAfterMove(place) => write!(f, "use of moved value '{}'", place.root),
-            Self::MoveWhileBorrowed(place) => write!(f, "cannot move '{}' while it is borrowed", place.root),
-            Self::ReadWhileExclusivelyBorrowed(place) => write!(f, "cannot read '{}' while it is exclusively borrowed", place.root),
-            Self::WriteWhileBorrowed(place) => write!(f, "cannot write '{}' while it is borrowed", place.root),
-            Self::ConflictingBorrow { place, requested: BorrowKind::Shared } => write!(f, "cannot create a shared borrow of '{}' while it is exclusively borrowed", place.root),
-            Self::ConflictingBorrow { place, requested: BorrowKind::Exclusive } => write!(f, "cannot create an exclusive borrow of '{}' while it is borrowed", place.root),
+            Self::MoveWhileBorrowed(place) => {
+                write!(f, "cannot move '{}' while it is borrowed", place.root)
+            },
+            Self::ReadWhileExclusivelyBorrowed(place) => write!(
+                f,
+                "cannot read '{}' while it is exclusively borrowed",
+                place.root
+            ),
+            Self::WriteWhileBorrowed(place) => {
+                write!(f, "cannot write '{}' while it is borrowed", place.root)
+            },
+            Self::ConflictingBorrow {
+                place,
+                requested: BorrowKind::Shared,
+            } => write!(
+                f,
+                "cannot create a shared borrow of '{}' while it is exclusively borrowed",
+                place.root
+            ),
+            Self::ConflictingBorrow {
+                place,
+                requested: BorrowKind::Exclusive,
+            } => write!(
+                f,
+                "cannot create an exclusive borrow of '{}' while it is borrowed",
+                place.root
+            ),
             Self::UnknownBorrow(id) => write!(f, "unknown or already released borrow {id}"),
         }
     }
@@ -109,7 +134,9 @@ pub struct OwnershipState {
 }
 
 impl OwnershipState {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     fn ensure_live(&self, place: &Place) -> Result<(), OwnershipError> {
         if self.moved.iter().any(|moved| moved.overlaps(place)) {
@@ -121,9 +148,11 @@ impl OwnershipState {
 
     pub fn read(&self, place: &Place) -> Result<(), OwnershipError> {
         self.ensure_live(place)?;
-        if self.borrows.values().any(|borrow| {
-            borrow.kind == BorrowKind::Exclusive && borrow.place.overlaps(place)
-        }) {
+        if self
+            .borrows
+            .values()
+            .any(|borrow| borrow.kind == BorrowKind::Exclusive && borrow.place.overlaps(place))
+        {
             return Err(OwnershipError::ReadWhileExclusivelyBorrowed(place.clone()));
         }
         Ok(())
@@ -131,7 +160,11 @@ impl OwnershipState {
 
     pub fn move_out(&mut self, place: Place) -> Result<(), OwnershipError> {
         self.ensure_live(&place)?;
-        if self.borrows.values().any(|borrow| borrow.place.overlaps(&place)) {
+        if self
+            .borrows
+            .values()
+            .any(|borrow| borrow.place.overlaps(&place))
+        {
             return Err(OwnershipError::MoveWhileBorrowed(place));
         }
         self.moved.insert(place);
@@ -155,23 +188,34 @@ impl OwnershipState {
                 && (kind == BorrowKind::Exclusive || active.kind == BorrowKind::Exclusive)
         });
         if conflict {
-            return Err(OwnershipError::ConflictingBorrow { place, requested: kind });
+            return Err(OwnershipError::ConflictingBorrow {
+                place,
+                requested: kind,
+            });
         }
         let id = self.next_borrow;
-        self.next_borrow = self.next_borrow.checked_add(1).expect("borrow ID space exhausted");
+        self.next_borrow = self
+            .next_borrow
+            .checked_add(1)
+            .expect("borrow ID space exhausted");
         self.borrows.insert(id, ActiveBorrow { place, kind });
         Ok(id)
     }
 
     pub fn release(&mut self, id: u64) -> Result<(), OwnershipError> {
-        self.borrows.remove(&id).map(|_| ()).ok_or(OwnershipError::UnknownBorrow(id))
+        self.borrows
+            .remove(&id)
+            .map(|_| ())
+            .ok_or(OwnershipError::UnknownBorrow(id))
     }
 
     pub fn is_moved(&self, place: &Place) -> bool {
         self.moved.iter().any(|moved| moved.overlaps(place))
     }
 
-    pub fn active_borrow_count(&self) -> usize { self.borrows.len() }
+    pub fn active_borrow_count(&self) -> usize {
+        self.borrows.len()
+    }
 }
 
 #[cfg(test)]
@@ -183,8 +227,14 @@ mod tests {
         let mut state = OwnershipState::new();
         let value = Place::new("value");
         state.move_out(value.clone()).unwrap();
-        assert_eq!(state.read(&value), Err(OwnershipError::UseAfterMove(value.clone())));
-        assert_eq!(state.move_out(value.clone()), Err(OwnershipError::UseAfterMove(value)));
+        assert_eq!(
+            state.read(&value),
+            Err(OwnershipError::UseAfterMove(value.clone()))
+        );
+        assert_eq!(
+            state.move_out(value.clone()),
+            Err(OwnershipError::UseAfterMove(value))
+        );
     }
 
     #[test]
@@ -212,7 +262,10 @@ mod tests {
         let place = Place::new("value");
         let first = state.borrow(place.clone(), BorrowKind::Shared).unwrap();
         let second = state.borrow(place.clone(), BorrowKind::Shared).unwrap();
-        assert_eq!(state.move_out(place.clone()), Err(OwnershipError::MoveWhileBorrowed(place.clone())));
+        assert_eq!(
+            state.move_out(place.clone()),
+            Err(OwnershipError::MoveWhileBorrowed(place.clone()))
+        );
         state.release(first).unwrap();
         state.release(second).unwrap();
         assert!(state.move_out(place).is_ok());
@@ -223,9 +276,18 @@ mod tests {
         let mut state = OwnershipState::new();
         let place = Place::new("value");
         let borrow = state.borrow(place.clone(), BorrowKind::Exclusive).unwrap();
-        assert_eq!(state.read(&place), Err(OwnershipError::ReadWhileExclusivelyBorrowed(place.clone())));
-        assert_eq!(state.assign(place.clone()), Err(OwnershipError::WriteWhileBorrowed(place.clone())));
-        assert!(matches!(state.borrow(place.clone(), BorrowKind::Shared), Err(OwnershipError::ConflictingBorrow { .. })));
+        assert_eq!(
+            state.read(&place),
+            Err(OwnershipError::ReadWhileExclusivelyBorrowed(place.clone()))
+        );
+        assert_eq!(
+            state.assign(place.clone()),
+            Err(OwnershipError::WriteWhileBorrowed(place.clone()))
+        );
+        assert!(matches!(
+            state.borrow(place.clone(), BorrowKind::Shared),
+            Err(OwnershipError::ConflictingBorrow { .. })
+        ));
         state.release(borrow).unwrap();
         assert!(state.read(&place).is_ok());
     }
@@ -236,7 +298,10 @@ mod tests {
         let dynamic = Place::new("items").dynamic_index();
         let fixed = Place::new("items").index(3);
         let borrow = state.borrow(dynamic, BorrowKind::Exclusive).unwrap();
-        assert!(matches!(state.read(&fixed), Err(OwnershipError::ReadWhileExclusivelyBorrowed(_))));
+        assert!(matches!(
+            state.read(&fixed),
+            Err(OwnershipError::ReadWhileExclusivelyBorrowed(_))
+        ));
         state.release(borrow).unwrap();
         assert!(state.read(&fixed).is_ok());
     }
@@ -244,14 +309,18 @@ mod tests {
     #[test]
     fn unrelated_roots_do_not_conflict() {
         let mut state = OwnershipState::new();
-        state.borrow(Place::new("first"), BorrowKind::Exclusive).unwrap();
+        state
+            .borrow(Place::new("first"), BorrowKind::Exclusive)
+            .unwrap();
         assert!(state.read(&Place::new("second")).is_ok());
     }
 
     #[test]
     fn releasing_a_borrow_twice_is_reported() {
         let mut state = OwnershipState::new();
-        let id = state.borrow(Place::new("value"), BorrowKind::Shared).unwrap();
+        let id = state
+            .borrow(Place::new("value"), BorrowKind::Shared)
+            .unwrap();
         state.release(id).unwrap();
         assert_eq!(state.release(id), Err(OwnershipError::UnknownBorrow(id)));
     }
