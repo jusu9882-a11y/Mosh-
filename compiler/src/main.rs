@@ -374,6 +374,14 @@ mod tests {
     }
 
     #[test]
+    fn build_rejects_for_loops_until_iteration_is_implemented() {
+        assert_build_rejects(
+            "for",
+            "function main():\n    for item in 1:\n        print(item)\n",
+        );
+    }
+
+    #[test]
     fn build_command_creates_a_runnable_native_executable() {
         let base = std::env::temp_dir().join(format!("moshc-cli-smoke-{}", std::process::id()));
         let source = base.with_extension("mosh");
