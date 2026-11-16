@@ -866,7 +866,7 @@ mod tests {
 
     #[test]
     fn decodes_string_literal_quotes_and_escape_sequences() {
-        let program = parsed(r#"let message = "hello\\n\\\"mosh\\\"\\\\world""#).unwrap();
+        let program = parsed(r#"let message = "hello\n\"mosh\"\\world""#).unwrap();
         let Stmt::Let {
             value: Some(Expr::String { value, .. }),
             ..
@@ -874,7 +874,7 @@ mod tests {
         else {
             panic!("expected a string binding");
         };
-        assert_eq!(value, "hello\n\\"mosh\\"\\world");
+        assert_eq!(value, "hello\n\"mosh\"\\world");
     }
 
     #[test]
