@@ -26,7 +26,7 @@ The repository now contains a working compiler pipeline for an initial primitive
 6. Textual LLVM IR generation and native executable linking through Clang.
 7. End-to-end tests that build and execute generated native programs.
 
-The current native backend supports the primitive types `Int`, `Float`, `Bool`, `String`, and `Unit` in the supported contexts; named function calls; arithmetic and comparisons; bitwise integer operations; local variables and assignments; conditional and while-loop control flow; and the built-in `print`.
+The current native backend supports the primitive types `Int`, `Float`, `Bool`, `String`, and `Unit` in the supported contexts; named and recursive function calls; arithmetic and comparisons; bitwise integer operations; block-scoped local variables (including shadowed names) and assignments; conditional and while-loop control flow; and the built-in `print`.
 
 The backend currently maps `Int` to signed 64-bit integers and `Float` to LLVM `double`. These are implementation choices for the first backend, not yet a final language-wide representation contract.
 
@@ -51,7 +51,7 @@ This is not yet the complete Mosh language or a complete systems compiler. In pa
 
 - `for`-loop lowering and iterable/collection types are not implemented.
 - Nested functions, member access, indexing, structures, enumerations, arrays, and generics are not implemented in the initial compiler pipeline.
-- The native backend does not yet support shadowed local names, uninitialized local storage, or module-global variable storage.
+- The native backend does not yet support uninitialized local storage or module-global variable storage.
 - Ownership and borrow checking are not implemented.
 - Raw pointers, manual allocation, custom allocators, explicit layouts, atomics, volatile operations, C interoperability, and inline assembly are not implemented.
 - A complete Mosh runtime and standard library do not exist yet.
