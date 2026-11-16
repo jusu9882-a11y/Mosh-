@@ -949,14 +949,32 @@ mod tests {
     }
 
     #[test]
-    fn rejects_struct_value_lowering_until_native_aggregate_support_exists() {
+    fn checks_struct_construction_and_member_access_types() {
+        assert!(checked(
+            "struct Point:\n    x: Int\n    y: Float\nfunction main():\n    let point = Point { x: 1, y: 2.5 }\n    print(point.x)\n    print(point.y)\n    return\n"
+        ).is_ok());
+    }
+
+    #[test]
+    fn rejects_struct_literal_field_type_mismatches() {
         let errors = checked(
-            "struct Point:\n    x: Int\nfunction main():\n    let point = Point { x: 1 }\n    return\n",
+            "struct Point:\n    x: Int\nfunction main():\n    let point = Point { x: 2.5 }\n    return\n",
         )
         .unwrap_err();
-        assert!(errors.iter().any(|error| error
-            .message
-            .contains("not yet supported by native type lowering")));
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("field 'x' in 'Point'")));
+    }
+
+    #[test]
+    fn rejects_unknown_struct_members() {
+        let errors = checked(
+            "struct Point:\n    x: Int\nfunction main():\n    let point = Point { x: 1 }\n    print(point.z)\n    return\n",
+        )
+        .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("structure has no field 'z'")));
     }
 
     #[test]
