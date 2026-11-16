@@ -378,8 +378,13 @@ impl Checker {
                 body,
                 span,
             } => {
-                // Iterable/collection types are deliberately outside this first
-                // primitive-type milestone. Name resolution still validates it.
+                // The parser recognizes for-loops, but iteration semantics and
+                // MIR/native lowering are not implemented yet. Reject them here
+                // so the check command cannot report success for an unbuildable loop.
+                self.error(
+                    "for-loops are not supported by the initial compiler pipeline",
+                    *span,
+                );
                 let _ = self.expression(iterable);
                 let before = self.scopes.clone();
                 self.push_scope();
@@ -749,6 +754,17 @@ mod tests {
 
         let else_returns = "function choose(flag: Bool) -> Int:\n    mut value: Int\n    if flag:\n        value = 7\n    else:\n        return 0\n    return value\n";
         assert!(checked(else_returns).is_ok());
+    }
+
+    #[test]
+    fn rejects_for_loops_until_iteration_is_implemented() {
+        let errors = checked(
+            "function main():\n    for item in 1:\n        print(item)\n",
+        )
+        .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("for-loops are not supported")));
     }
 
     #[test]
