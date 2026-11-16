@@ -77,7 +77,7 @@ impl std::error::Error for RuntimeTypeAllocationError {}
 pub struct Allocation {
     pointer: NonNull<u8>,
     layout: Layout,
-    allocated: bool,
+    size: usize,
 }
 
 impl fmt::Debug for Allocation {
@@ -85,7 +85,7 @@ impl fmt::Debug for Allocation {
         f.debug_struct("Allocation")
             .field("size", &self.size())
             .field("align", &self.align())
-            .field("allocated", &self.allocated)
+            
             .finish()
     }
 }
@@ -101,16 +101,11 @@ impl Allocation {
     }
 
     pub fn zeroed(size: usize, align: usize) -> Result<Self, AllocationError> {
-        let layout = Layout::from_size_align(size, align)
+        // Reserve one physical byte for a logical zero-sized allocation so
+        // the returned pointer still satisfies the requested alignment.
+        let physical_size = size.max(1);
+        let layout = Layout::from_size_align(physical_size, align)
             .map_err(|_| AllocationError::InvalidLayout { size, align })?;
-
-        if size == 0 {
-            return Ok(Self {
-                pointer: NonNull::new(align as *mut u8).expect("validated alignment is nonzero"),
-                layout,
-                allocated: false,
-            });
-        }
 
         // SAFETY: layout was validated above and has non-zero size. The
         // returned allocation is uniquely owned by this value until Drop.
@@ -120,12 +115,12 @@ impl Allocation {
         Ok(Self {
             pointer,
             layout,
-            allocated: true,
+            size,
         })
     }
 
     pub fn size(&self) -> usize {
-        self.layout.size()
+        self.size
     }
     pub fn align(&self) -> usize {
         self.layout.align()
@@ -206,12 +201,9 @@ impl Allocation {
 
 impl Drop for Allocation {
     fn drop(&mut self) {
-        if self.allocated {
-            // SAFETY: pointer came from alloc_zeroed with this exact layout,
-            // is uniquely owned, and is deallocated at most once.
-            unsafe { dealloc(self.pointer.as_ptr(), self.layout) };
-            self.allocated = false;
-        }
+        // SAFETY: pointer came from alloc_zeroed with this exact layout,
+        // is uniquely owned, and Drop runs exactly once.
+        unsafe { dealloc(self.pointer.as_ptr(), self.layout) };
     }
 }
 
