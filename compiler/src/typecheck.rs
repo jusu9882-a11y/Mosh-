@@ -94,6 +94,11 @@ pub fn check(program: &Program) -> Result<(), Vec<TypeError>> {
     // Function signatures are collected first, matching module-level
     // forward-reference and mutual-recursion name resolution.
     for statement in &program.statements {
+        if let Stmt::Struct { fields, .. } = statement {
+            for field in fields {
+                checker.resolve_type(&field.ty);
+            }
+        }
         if let Stmt::Function {
             name,
             params,
