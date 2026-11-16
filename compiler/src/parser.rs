@@ -689,7 +689,6 @@ fn precedence(kind: &TokenKind) -> Option<(u8, bool)> {
     Some((p, false))
 }
 
-
 fn decode_string_literal(raw: &str) -> String {
     let Some(body) = raw.get(1..raw.len().saturating_sub(1)) else {
         return String::new();
