@@ -43,6 +43,11 @@ jobs:
           ./target/release/moshc build ../examples/control_flow.mosh -o target/control-flow
           output="$(./target/control-flow)"
           test "$output" = "sum=15"
+      - name: Build and run the Mosh recursive Fibonacci example
+        run: |
+          ./target/release/moshc build ../examples/fibonacci.mosh -o target/fibonacci
+          output="$(./target/fibonacci)"
+          test "$output" = "55"
       - name: Upload Linux compiler preview
         uses: actions/upload-artifact@v4
         with:
