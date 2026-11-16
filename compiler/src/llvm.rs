@@ -990,6 +990,82 @@ impl<'a> FunctionEmitter<'a> {
     }
 }
 
+
+/// Generate textual LLVM IR for the currently supported primitive MIR subset.
+pub fn generate(module: &MirModule) -> Result<String> {
+    if let Err(errors) = validate(module) {
+        return Err(errors
+            .into_iter()
+            .map(|issue| error(issue.message))
+            .collect());
+    }
+    let signatures = collect_signatures(module);
+    let mut strings = HashMap::<String, usize>::new();
+    let mut bodies = String::new();
+    let mut errors = Vec::new();
+
+    for function in &module.functions {
+        match FunctionEmitter::new(function, &signatures, &mut strings)
+            .and_then(FunctionEmitter::emit)
+        {
+            Ok(body) => bodies.push_str(&body),
+            Err(mut found) => errors.append(&mut found),
+        }
+    }
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+
+    let Some(main) = module.functions.iter().find(|function| function.name == "main") else {
+        return Err(vec![error("native executable requires a function named 'main'")]);
+    };
+    if !main.parameters.is_empty() {
+        return Err(vec![error("main must not declare parameters")]);
+    }
+    if !matches!(main.return_type, MirType::Int | MirType::Unit) {
+        return Err(vec![error("main must return Int or Unit")]);
+    }
+    if module
+        .functions
+        .iter()
+        .filter(|function| function.name == "__mosh_init")
+        .count()
+        > 1
+    {
+        return Err(vec![error(
+            "the function name '__mosh_init' is reserved for module initialization",
+        )]);
+    }
+
+    let mut output =
+        String::from("declare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\n\n");
+    for (value, index) in &strings {
+        let _ = writeln!(
+            output,
+            "@.mosh.str.{index} = private unnamed_addr constant [{} x i8] c\"{}\", align 1",
+            value.len() + 1,
+            escaped_bytes(value)
+        );
+    }
+    output.push('\n');
+    output.push_str(&bodies);
+    output.push_str("define i32 @main() {\nentry:\n");
+    if module
+        .functions
+        .iter()
+        .any(|function| function.name == "__mosh_init")
+    {
+        output.push_str("  call void @mosh___mosh_init()\n");
+    }
+    if main.return_type == MirType::Int {
+        output.push_str("  %mosh.result = call i64 @mosh_user_main()\n  %mosh.exit = trunc i64 %mosh.result to i32\n  ret i32 %mosh.exit\n");
+    } else {
+        output.push_str("  call void @mosh_user_main()\n  ret i32 0\n");
+    }
+    output.push_str("}\n");
+    Ok(output)
+}
+
 #[cfg(test)]
 mod tests {
     use super::generate;
