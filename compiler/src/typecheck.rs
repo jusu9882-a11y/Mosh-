@@ -136,7 +136,7 @@ pub fn check(program: &Program) -> Result<(), Vec<TypeError>> {
     }
 
     for statement in &program.statements {
-        if !matches!(statement, Stmt::Function { .. }) {
+        if !matches!(statement, Stmt::Function { .. } | Stmt::Struct { .. }) {
             checker.error(
                 "module-level executable statements and global bindings are not supported",
                 statement_span(statement),
@@ -252,6 +252,7 @@ impl Checker {
 
     fn statement(&mut self, statement: &Stmt) {
         match statement {
+            Stmt::Struct { .. } => {}
             Stmt::Function {
                 name,
                 params,
@@ -552,6 +553,16 @@ impl Checker {
             Expr::Float { .. } => Type::Float,
             Expr::String { .. } => Type::String,
             Expr::Boolean { .. } => Type::Bool,
+            Expr::StructLiteral { name, fields, span } => {
+                for (_, value, _) in fields {
+                    self.expression(value);
+                }
+                self.error(
+                    format!("structure value '{name}' is not yet supported by native type lowering"),
+                    *span,
+                );
+                Type::Unknown
+            },
             Expr::Identifier { name, span } => match self.lookup(name) {
                 Some(variable) => {
                     if !variable.initialized {
@@ -788,7 +799,8 @@ fn statement_guarantees_return(statement: &Stmt) -> bool {
 
 fn statement_span(statement: &Stmt) -> Span {
     match statement {
-        Stmt::Function { span, .. }
+        Stmt::Struct { span, .. }
+        | Stmt::Function { span, .. }
         | Stmt::Let { span, .. }
         | Stmt::Return { span, .. }
         | Stmt::If { span, .. }
@@ -802,6 +814,7 @@ fn statement_span(statement: &Stmt) -> Span {
 fn expr_span(expression: &Expr) -> Span {
     match expression {
         Expr::Identifier { span, .. }
+        | Expr::StructLiteral { span, .. }
         | Expr::Integer { span, .. }
         | Expr::Float { span, .. }
         | Expr::String { span, .. }
