@@ -32,3 +32,9 @@ jobs:
         run: cargo test --all-targets
       - name: Check compilation
         run: cargo check --all-targets
+      - name: Build and run the Mosh hello-world example
+        run: |
+          cargo build --release
+          ./target/release/moshc build ../examples/hello.mosh -o target/hello
+          output="$(./target/hello)"
+          test "$output" = "Hello, Mosh!"
