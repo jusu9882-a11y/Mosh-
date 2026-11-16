@@ -1750,10 +1750,17 @@ mod tests {
     }
 
     #[test]
-    fn reports_deferred_for_loop_lowering() {
-        let tokens = tokenize("let items: Int = 1\nfor item in items:\n    print(item)\n").unwrap();
-        let program = parse(&tokens).unwrap();
-        crate::semantic::analyze(&program).unwrap();
-        assert!(lower(&program).is_err());
+    fn lowers_range_for_loops_with_one_or_two_bounds() {
+        let single_bound = compile(
+            "function main() -> Unit:\n    for item in range(4):\n        print(item)\n",
+        )
+        .unwrap();
+        assert!(super::validate(&single_bound).is_ok());
+
+        let explicit_bounds = compile(
+            "function main() -> Unit:\n    for item in range(2, 5):\n        print(item)\n",
+        )
+        .unwrap();
+        assert!(super::validate(&explicit_bounds).is_ok());
     }
 }
