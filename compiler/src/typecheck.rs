@@ -758,10 +758,8 @@ mod tests {
 
     #[test]
     fn rejects_for_loops_until_iteration_is_implemented() {
-        let errors = checked(
-            "function main():\n    for item in 1:\n        print(item)\n",
-        )
-        .unwrap_err();
+        let errors =
+            checked("function main():\n    for item in 1:\n        print(item)\n").unwrap_err();
         assert!(errors
             .iter()
             .any(|error| error.message.contains("for-loops are not supported")));
