@@ -1171,12 +1171,185 @@ impl Builder {
                 }
                 exit
             }
-            Stmt::For { span, .. } => {
-                self.error(
-                    "for-loop lowering is deferred until iterable types are implemented",
+            Stmt::For {
+                name,
+                iterable,
+                body,
+                span,
+            } => {
+                let (start_value, end_value) = match iterable {
+                    Expr::Call {
+                        callee,
+                        arguments,
+                        ..
+                    } if matches!(
+                        callee.as_ref(),
+                        Expr::Identifier { name, .. } if name == "range"
+                    ) => match arguments.as_slice() {
+                        [end] => {
+                            let start = self.emit(
+                                current,
+                                InstructionKind::Integer("0".into()),
+                                *span,
+                                true,
+                            );
+                            let end = self.expression(end, current);
+                            (start, end)
+                        }
+                        [start, end] => {
+                            let start = self.expression(start, current);
+                            let end = self.expression(end, current);
+                            (start, end)
+                        }
+                        _ => {
+                            self.error("range() expects one or two Int arguments", *span);
+                            return current;
+                        }
+                    },
+                    _ => {
+                        self.error(
+                            "for-loop iterable must be range(end) or range(start, end)",
+                            *span,
+                        );
+                        return current;
+                    }
+                };
+                let (Some(start_value), Some(end_value)) = (start_value, end_value) else {
+                    return current;
+                };
+
+                let loop_id = self.function.blocks.len();
+                let index_name = format!("$for.index.{loop_id}");
+                let end_name = format!("$for.end.{loop_id}");
+                self.emit(
+                    current,
+                    InstructionKind::Declare {
+                        name: index_name.clone(),
+                        mutable: true,
+                        value: Some(start_value),
+                    },
                     *span,
+                    false,
                 );
-                current
+                self.emit(
+                    current,
+                    InstructionKind::Declare {
+                        name: end_name.clone(),
+                        mutable: false,
+                        value: Some(end_value),
+                    },
+                    *span,
+                    false,
+                );
+
+                let check = self.block();
+                let loop_body = self.block();
+                let exit = self.block();
+                self.end(current, Terminator::Jump(check));
+
+                let index = self.emit(
+                    check,
+                    InstructionKind::Load {
+                        name: index_name.clone(),
+                    },
+                    *span,
+                    true,
+                );
+                let end = self.emit(
+                    check,
+                    InstructionKind::Load {
+                        name: end_name,
+                    },
+                    *span,
+                    true,
+                );
+                let condition = match (index, end) {
+                    (Some(index), Some(end)) => self.emit(
+                        check,
+                        InstructionKind::Binary {
+                            left: index,
+                            operator: TokenKind::Less,
+                            right: end,
+                        },
+                        *span,
+                        true,
+                    ),
+                    _ => None,
+                };
+                let Some(condition) = condition else {
+                    return exit;
+                };
+                self.end(
+                    check,
+                    Terminator::Branch {
+                        condition,
+                        then_block: loop_body,
+                        else_block: exit,
+                    },
+                );
+
+                let loop_value = self.emit(
+                    loop_body,
+                    InstructionKind::Load {
+                        name: index_name.clone(),
+                    },
+                    *span,
+                    true,
+                );
+                self.emit(
+                    loop_body,
+                    InstructionKind::Declare {
+                        name: name.clone(),
+                        mutable: false,
+                        value: loop_value,
+                    },
+                    *span,
+                    false,
+                );
+                let body_end = self.statements(body, loop_body);
+                if self.function.blocks[body_end.0 as usize]
+                    .terminator
+                    .is_none()
+                {
+                    let index = self.emit(
+                        body_end,
+                        InstructionKind::Load {
+                            name: index_name.clone(),
+                        },
+                        *span,
+                        true,
+                    );
+                    let one = self.emit(
+                        body_end,
+                        InstructionKind::Integer("1".into()),
+                        *span,
+                        true,
+                    );
+                    if let (Some(index), Some(one)) = (index, one) {
+                        if let Some(next) = self.emit(
+                            body_end,
+                            InstructionKind::Binary {
+                                left: index,
+                                operator: TokenKind::Plus,
+                                right: one,
+                            },
+                            *span,
+                            true,
+                        ) {
+                            self.emit(
+                                body_end,
+                                InstructionKind::Store {
+                                    name: index_name,
+                                    value: next,
+                                },
+                                *span,
+                                false,
+                            );
+                        }
+                    }
+                    self.end(body_end, Terminator::Jump(check));
+                }
+                exit
             }
             Stmt::Function { span, .. } => {
                 self.error(
