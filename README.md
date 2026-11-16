@@ -20,7 +20,7 @@ The repository now contains a working compiler pipeline for an initial primitive
 
 1. Lexer and indentation-aware parser.
 2. Name resolution and lexical scope checks.
-3. Primitive static type checking and inference.
+3. Primitive static type checking, inference, and conservative definite-initialization checks (including branch joins and zero-iteration loops).
 4. MIR lowering for functions, locals, expressions, `if/else`, `while`, and returns.
 5. MIR structural, control-flow dominance, binding, and inferable type validation.
 6. Textual LLVM IR generation and native executable linking through Clang.
@@ -51,7 +51,7 @@ This is not yet the complete Mosh language or a complete systems compiler. In pa
 
 - `for`-loop lowering and iterable/collection types are not implemented.
 - Nested functions, member access, indexing, structures, enumerations, arrays, and generics are not implemented in the initial compiler pipeline.
-- The native backend does not yet support uninitialized local storage or module-global variable storage.
+- Module-global variable storage is not implemented.
 - Ownership and borrow checking are not implemented.
 - Raw pointers, manual allocation, custom allocators, explicit layouts, atomics, volatile operations, C interoperability, and inline assembly are not implemented.
 - A complete Mosh runtime and standard library do not exist yet.
