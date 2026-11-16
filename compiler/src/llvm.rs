@@ -94,10 +94,174 @@ fn collect_signatures(module: &MirModule) -> HashMap<String, (Vec<MirType>, MirT
         .collect()
 }
 
+#[derive(Debug, Clone)]
+struct LocalBinding {
+    name: String,
+    block: usize,
+    instruction: Option<usize>,
+    mutable: bool,
+    ty: MirType,
+    slot: String,
+    parameter_index: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+struct ControlFlow {
+    reachable: Vec<bool>,
+    dominators: Vec<HashSet<usize>>,
+}
+
+fn compute_control_flow(function: &MirFunction) -> ControlFlow {
+    let block_count = function.blocks.len();
+    let mut predecessors = vec![Vec::<usize>::new(); block_count];
+    for (source, block) in function.blocks.iter().enumerate() {
+        let mut add_edge = |target: crate::mir::BlockId| {
+            let target = target.0 as usize;
+            if target < block_count && !predecessors[target].contains(&source) {
+                predecessors[target].push(source);
+            }
+        };
+        match block.terminator.as_ref() {
+            Some(Terminator::Jump(target)) => add_edge(*target),
+            Some(Terminator::Branch {
+                then_block,
+                else_block,
+                ..
+            }) => {
+                add_edge(*then_block);
+                add_edge(*else_block);
+            }
+            Some(Terminator::Return(_)) | None => {}
+        }
+    }
+
+    let mut reachable = vec![false; block_count];
+    if block_count > 0 {
+        let mut queue = std::collections::VecDeque::from([0usize]);
+        reachable[0] = true;
+        while let Some(source) = queue.pop_front() {
+            let targets: Vec<usize> = match function.blocks[source].terminator.as_ref() {
+                Some(Terminator::Jump(target)) => vec![target.0 as usize],
+                Some(Terminator::Branch {
+                    then_block,
+                    else_block,
+                    ..
+                }) => vec![then_block.0 as usize, else_block.0 as usize],
+                Some(Terminator::Return(_)) | None => Vec::new(),
+            };
+            for target in targets {
+                if target < block_count && !reachable[target] {
+                    reachable[target] = true;
+                    queue.push_back(target);
+                }
+            }
+        }
+    }
+
+    let reachable_set: HashSet<usize> = reachable
+        .iter()
+        .enumerate()
+        .filter_map(|(index, is_reachable)| is_reachable.then_some(index))
+        .collect();
+    let mut dominators = vec![HashSet::<usize>::new(); block_count];
+    for index in 0..block_count {
+        if reachable[index] {
+            dominators[index] = if index == 0 {
+                HashSet::from([0])
+            } else {
+                reachable_set.clone()
+            };
+        } else {
+            dominators[index].insert(index);
+        }
+    }
+
+    loop {
+        let mut changed = false;
+        for block in 1..block_count {
+            if !reachable[block] {
+                continue;
+            }
+            let incoming: Vec<usize> = predecessors[block]
+                .iter()
+                .copied()
+                .filter(|predecessor| reachable[*predecessor])
+                .collect();
+            let mut next = if let Some(first) = incoming.first() {
+                dominators[*first].clone()
+            } else {
+                HashSet::new()
+            };
+            for predecessor in incoming.iter().skip(1) {
+                next.retain(|candidate| dominators[*predecessor].contains(candidate));
+            }
+            next.insert(block);
+            if next != dominators[block] {
+                dominators[block] = next;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    ControlFlow {
+        reachable,
+        dominators,
+    }
+}
+
+fn binding_is_visible(
+    binding: &LocalBinding,
+    use_block: usize,
+    use_position: usize,
+    flow: &ControlFlow,
+) -> bool {
+    if binding.parameter_index.is_some() {
+        return true;
+    }
+    if binding.block == use_block {
+        return binding
+            .instruction
+            .is_some_and(|position| position < use_position);
+    }
+    flow.reachable
+        .get(use_block)
+        .copied()
+        .unwrap_or(false)
+        && flow.reachable.get(binding.block).copied().unwrap_or(false)
+        && flow.dominators[use_block].contains(&binding.block)
+}
+
+fn resolve_binding<'a>(
+    name: &str,
+    use_block: usize,
+    use_position: usize,
+    bindings: &'a [LocalBinding],
+    flow: &ControlFlow,
+) -> Option<&'a LocalBinding> {
+    bindings
+        .iter()
+        .filter(|binding| {
+            binding.name == name
+                && binding_is_visible(binding, use_block, use_position, flow)
+        })
+        .max_by_key(|binding| {
+            (
+                flow.dominators
+                    .get(binding.block)
+                    .map_or(0, HashSet::len),
+                binding.instruction.unwrap_or(0),
+            )
+        })
+}
+
 fn infer_value_type(
     value: ValueId,
-    definitions: &HashMap<ValueId, &Instruction>,
-    locals: &HashMap<String, MirType>,
+    definitions: &HashMap<ValueId, (usize, usize, &Instruction)>,
+    bindings: &[LocalBinding],
+    flow: &ControlFlow,
     signatures: &HashMap<String, (Vec<MirType>, MirType)>,
     cache: &mut HashMap<ValueId, Option<MirType>>,
     active: &mut HashSet<ValueId>,
@@ -110,15 +274,18 @@ fn infer_value_type(
     }
     let inferred = definitions
         .get(&value)
-        .and_then(|instruction| match &instruction.kind {
+        .and_then(|(block, position, instruction)| match &instruction.kind {
             InstructionKind::Integer(_) => Some(MirType::Int),
             InstructionKind::Float(_) => Some(MirType::Float),
             InstructionKind::String(_) => Some(MirType::String),
             InstructionKind::Boolean(_) => Some(MirType::Bool),
-            InstructionKind::Load { name } => locals.get(name).copied(),
+            InstructionKind::Load { name } => {
+                resolve_binding(name, *block, *position, bindings, flow).map(|binding| binding.ty)
+            }
             InstructionKind::Unary { operator, operand } => {
-                let operand_type =
-                    infer_value_type(*operand, definitions, locals, signatures, cache, active)?;
+                let operand_type = infer_value_type(
+                    *operand, definitions, bindings, flow, signatures, cache, active,
+                )?;
                 match operator {
                     TokenKind::Minus if matches!(operand_type, MirType::Int | MirType::Float) => {
                         Some(operand_type)
@@ -132,9 +299,12 @@ fn infer_value_type(
                 operator,
                 right,
             } => {
-                let left = infer_value_type(*left, definitions, locals, signatures, cache, active)?;
-                let right =
-                    infer_value_type(*right, definitions, locals, signatures, cache, active)?;
+                let left = infer_value_type(
+                    *left, definitions, bindings, flow, signatures, cache, active,
+                )?;
+                let right = infer_value_type(
+                    *right, definitions, bindings, flow, signatures, cache, active,
+                )?;
                 match operator {
                     TokenKind::Plus
                     | TokenKind::Minus
@@ -175,75 +345,98 @@ fn infer_value_type(
     inferred
 }
 
-fn function_locals(
+fn function_bindings(
     function: &MirFunction,
     signatures: &HashMap<String, (Vec<MirType>, MirType)>,
-) -> Result<HashMap<String, MirType>> {
-    let mut locals = HashMap::new();
-    for parameter in &function.parameters {
+) -> Result<(Vec<LocalBinding>, ControlFlow)> {
+    let flow = compute_control_flow(function);
+    let mut bindings = Vec::new();
+    for (index, parameter) in function.parameters.iter().enumerate() {
         if parameter.ty == MirType::Unit {
             return Err(vec![error(format!(
                 "function '{}' cannot accept Unit parameters in the native backend",
                 function.name
             ))]);
         }
-        if locals
-            .insert(parameter.name.clone(), parameter.ty)
-            .is_some()
+        if bindings
+            .iter()
+            .any(|binding: &LocalBinding| binding.name == parameter.name)
         {
             return Err(vec![error(format!(
-                "function '{}' has duplicate local name '{}'",
+                "function '{}' has duplicate parameter name '{}'",
                 function.name, parameter.name
             ))]);
         }
+        bindings.push(LocalBinding {
+            name: parameter.name.clone(),
+            block: 0,
+            instruction: None,
+            mutable: false,
+            ty: parameter.ty,
+            slot: format!("param.{index}"),
+            parameter_index: Some(index),
+        });
     }
 
-    let definitions: HashMap<ValueId, &Instruction> = function
+    let definitions: HashMap<ValueId, (usize, usize, &Instruction)> = function
         .blocks
         .iter()
-        .flat_map(|block| block.instructions.iter())
-        .filter_map(|instruction| instruction.result.map(|id| (id, instruction)))
+        .enumerate()
+        .flat_map(|(block_index, block)| {
+            block.instructions.iter().enumerate().filter_map(
+                move |(instruction_index, instruction)| {
+                    instruction
+                        .result
+                        .map(|id| (id, (block_index, instruction_index, instruction)))
+                },
+            )
+        })
         .collect();
 
     let mut errors = Vec::new();
-    for block in &function.blocks {
-        for instruction in &block.instructions {
-            if let InstructionKind::Declare { name, value, .. } = &instruction.kind {
+    for (block_index, block) in function.blocks.iter().enumerate() {
+        for (instruction_index, instruction) in block.instructions.iter().enumerate() {
+            if let InstructionKind::Declare {
+                name,
+                mutable,
+                value,
+            } = &instruction.kind
+            {
                 let ty = value.and_then(|value| {
                     infer_value_type(
                         value,
                         &definitions,
-                        &locals,
+                        &bindings,
+                        &flow,
                         signatures,
                         &mut HashMap::new(),
                         &mut HashSet::new(),
                     )
                 });
-                if let Some(ty) = ty {
-                    if ty == MirType::Unit {
-                        errors.push(error(format!(
-                            "local '{}' in function '{}' cannot have type Unit",
-                            name, function.name
-                        )));
-                        continue;
-                    }
-                    if locals.insert(name.clone(), ty).is_some() {
-                        errors.push(error(format!(
-                            "function '{}' declares local '{}' more than once; this backend version does not yet support shadowed local storage",
-                            function.name, name
-                        )));
-                    }
-                } else {
-                    errors.push(error(format!(
+                match ty {
+                    Some(MirType::Unit) => errors.push(error(format!(
+                        "local '{}' in function '{}' cannot have type Unit",
+                        name, function.name
+                    ))),
+                    Some(ty) => bindings.push(LocalBinding {
+                        name: name.clone(),
+                        block: block_index,
+                        instruction: Some(instruction_index),
+                        mutable: *mutable,
+                        ty,
+                        slot: format!("local.{block_index}.{instruction_index}"),
+                        parameter_index: None,
+                    }),
+                    None => errors.push(error(format!(
                         "cannot determine the type of local '{}' in function '{}'",
                         name, function.name
-                    )));
+                    ))),
                 }
             }
         }
     }
     if errors.is_empty() {
-        Ok(locals)
+        Ok((bindings, flow))
     } else {
         Err(errors)
     }
@@ -251,7 +444,8 @@ fn function_locals(
 
 struct FunctionEmitter<'a> {
     function: &'a MirFunction,
-    locals: HashMap<String, MirType>,
+    bindings: Vec<LocalBinding>,
+    flow: ControlFlow,
     signatures: &'a HashMap<String, (Vec<MirType>, MirType)>,
     values: HashMap<ValueId, String>,
     value_types: HashMap<ValueId, MirType>,
@@ -266,19 +460,28 @@ impl<'a> FunctionEmitter<'a> {
         signatures: &'a HashMap<String, (Vec<MirType>, MirType)>,
         strings: &'a mut HashMap<String, usize>,
     ) -> Result<Self> {
-        let locals = function_locals(function, signatures)?;
-        let definitions: HashMap<ValueId, &Instruction> = function
+        let (bindings, flow) = function_bindings(function, signatures)?;
+        let definitions: HashMap<ValueId, (usize, usize, &Instruction)> = function
             .blocks
             .iter()
-            .flat_map(|block| block.instructions.iter())
-            .filter_map(|instruction| instruction.result.map(|id| (id, instruction)))
+            .enumerate()
+            .flat_map(|(block_index, block)| {
+                block.instructions.iter().enumerate().filter_map(
+                    move |(instruction_index, instruction)| {
+                        instruction
+                            .result
+                            .map(|id| (id, (block_index, instruction_index, instruction)))
+                    },
+                )
+            })
             .collect();
         let mut value_types = HashMap::new();
         for value in definitions.keys().copied() {
             if let Some(ty) = infer_value_type(
                 value,
                 &definitions,
-                &locals,
+                &bindings,
+                &flow,
                 signatures,
                 &mut HashMap::new(),
                 &mut HashSet::new(),
@@ -288,7 +491,8 @@ impl<'a> FunctionEmitter<'a> {
         }
         Ok(Self {
             function,
-            locals,
+            bindings,
+            flow,
             signatures,
             values: HashMap::new(),
             value_types,
@@ -307,7 +511,7 @@ impl<'a> FunctionEmitter<'a> {
         })
     }
 
-    fn emit_instruction(&mut self, instruction: &Instruction) {
+    fn emit_instruction(&mut self, instruction: &Instruction, block_index: usize, instruction_index: usize) {
         match &instruction.kind {
             InstructionKind::Integer(text) => match text.replace('_', "").parse::<i64>() {
                 Ok(value) => {
@@ -347,15 +551,23 @@ impl<'a> FunctionEmitter<'a> {
             }
             InstructionKind::Declare { name, value, .. } => {
                 if let Some(value) = value {
+                    let binding = self.bindings.iter().find(|binding| {
+                        binding.name == *name
+                            && binding.block == block_index
+                            && binding.instruction == Some(instruction_index)
+                    });
+                    let Some(binding) = binding else {
+                        self.errors.push(error(format!("missing storage binding for local '{name}'")));
+                        return;
+                    };
                     match self.value(*value) {
                         Ok(operand) => {
-                            let ty = self.locals[name];
                             let _ = writeln!(
                                 self.output,
-                                "  store {} {}, ptr %local.{}",
-                                llvm_type(ty),
+                                "  store {} {}, ptr %{}",
+                                llvm_type(binding.ty),
                                 operand,
-                                local_slot(name)
+                                binding.slot
                             );
                         }
                         Err(errors) => self.errors.extend(errors),
@@ -363,7 +575,13 @@ impl<'a> FunctionEmitter<'a> {
                 }
             }
             InstructionKind::Load { name } => {
-                let Some(ty) = self.locals.get(name).copied() else {
+                let Some(binding) = resolve_binding(
+                    name,
+                    block_index,
+                    instruction_index,
+                    &self.bindings,
+                    &self.flow,
+                ) else {
                     self.errors.push(error(format!(
                         "unknown local '{name}' during LLVM generation"
                     )));
@@ -372,29 +590,44 @@ impl<'a> FunctionEmitter<'a> {
                 if let Some(id) = instruction.result {
                     let _ = writeln!(
                         self.output,
-                        "  %v{} = load {}, ptr %local.{}",
+                        "  %v{} = load {}, ptr %{}",
                         id.0,
-                        llvm_type(ty),
-                        local_slot(name)
+                        llvm_type(binding.ty),
+                        binding.slot
                     );
                     self.values.insert(id, format!("%v{}", id.0));
                 }
             }
             InstructionKind::Store { name, value } => {
-                match (self.locals.get(name).copied(), self.value(*value)) {
-                    (Some(ty), Ok(operand)) => {
+                let Some(binding) = resolve_binding(
+                    name,
+                    block_index,
+                    instruction_index,
+                    &self.bindings,
+                    &self.flow,
+                ) else {
+                    self.errors.push(error(format!(
+                        "unknown local '{name}' during LLVM generation"
+                    )));
+                    return;
+                };
+                if !binding.mutable {
+                    self.errors.push(error(format!(
+                        "cannot store to immutable local '{name}' during LLVM generation"
+                    )));
+                    return;
+                }
+                match self.value(*value) {
+                    Ok(operand) => {
                         let _ = writeln!(
                             self.output,
-                            "  store {} {}, ptr %local.{}",
-                            llvm_type(ty),
+                            "  store {} {}, ptr %{}",
+                            llvm_type(binding.ty),
                             operand,
-                            local_slot(name)
+                            binding.slot
                         );
                     }
-                    (None, _) => self.errors.push(error(format!(
-                        "unknown local '{name}' during LLVM generation"
-                    ))),
-                    (_, Err(errors)) => self.errors.extend(errors),
+                    Err(errors) => self.errors.extend(errors),
                 }
             }
             InstructionKind::Unary { operator, operand } => {
@@ -698,45 +931,28 @@ impl<'a> FunctionEmitter<'a> {
             "define {return_type} {symbol}({parameters}) {{"
         );
 
-        for block in &self.function.blocks {
+        for (block_index, block) in self.function.blocks.iter().enumerate() {
             let _ = writeln!(self.output, "bb{}:", block.id.0);
-            if block.id.0 == 0 {
-                for (index, parameter) in self.function.parameters.iter().enumerate() {
+            if block_index == 0 {
+                for binding in &self.bindings {
                     let _ = writeln!(
                         self.output,
-                        "  %local.{} = alloca {}",
-                        local_slot(&parameter.name),
-                        llvm_type(parameter.ty)
+                        "  %{} = alloca {}",
+                        binding.slot,
+                        llvm_type(binding.ty)
                     );
-                    let _ = writeln!(
-                        self.output,
-                        "  store {} %arg{index}, ptr %local.{}",
-                        llvm_type(parameter.ty),
-                        local_slot(&parameter.name)
-                    );
-                }
-                let mut emitted = HashSet::new();
-                for instruction in self
-                    .function
-                    .blocks
-                    .iter()
-                    .flat_map(|b| b.instructions.iter())
-                {
-                    if let InstructionKind::Declare { name, .. } = &instruction.kind {
-                        if emitted.insert(name.clone()) {
-                            let ty = self.locals[name];
-                            let _ = writeln!(
-                                self.output,
-                                "  %local.{} = alloca {}",
-                                local_slot(name),
-                                llvm_type(ty)
-                            );
-                        }
+                    if let Some(parameter_index) = binding.parameter_index {
+                        let _ = writeln!(
+                            self.output,
+                            "  store {} %arg{parameter_index}, ptr %{}",
+                            llvm_type(binding.ty),
+                            binding.slot
+                        );
                     }
                 }
             }
-            for instruction in &block.instructions {
-                self.emit_instruction(instruction);
+            for (instruction_index, instruction) in block.instructions.iter().enumerate() {
+                self.emit_instruction(instruction, block_index, instruction_index);
             }
             if let Some(terminator) = &block.terminator {
                 self.emit_terminator(terminator);
@@ -754,104 +970,6 @@ impl<'a> FunctionEmitter<'a> {
             Err(self.errors)
         }
     }
-}
-
-fn local_slot(name: &str) -> String {
-    let mut output = String::new();
-    for character in name.chars() {
-        if character.is_ascii_alphanumeric() || character == '_' {
-            output.push(character);
-        } else {
-            let _ = write!(output, "_{:x}", character as u32);
-        }
-    }
-    output
-}
-
-/// Generate textual LLVM IR for the currently supported primitive MIR subset.
-pub fn generate(module: &MirModule) -> Result<String> {
-    if let Err(errors) = validate(module) {
-        return Err(errors
-            .into_iter()
-            .map(|issue| error(issue.message))
-            .collect());
-    }
-    let signatures = collect_signatures(module);
-    let mut strings = HashMap::<String, usize>::new();
-    let mut bodies = String::new();
-    let mut errors = Vec::new();
-
-    for function in &module.functions {
-        match FunctionEmitter::new(function, &signatures, &mut strings)
-            .and_then(FunctionEmitter::emit)
-        {
-            Ok(body) => bodies.push_str(&body),
-            Err(mut found) => errors.append(&mut found),
-        }
-    }
-    if !errors.is_empty() {
-        return Err(errors);
-    }
-
-    if !module
-        .functions
-        .iter()
-        .any(|function| function.name == "main")
-    {
-        return Err(vec![error(
-            "native executable requires a function named 'main'",
-        )]);
-    }
-    let main = module
-        .functions
-        .iter()
-        .find(|function| function.name == "main")
-        .unwrap();
-    if !main.parameters.is_empty() {
-        return Err(vec![error("main must not declare parameters")]);
-    }
-    if !matches!(main.return_type, MirType::Int | MirType::Unit) {
-        return Err(vec![error("main must return Int or Unit")]);
-    }
-    if module
-        .functions
-        .iter()
-        .filter(|function| function.name == "__mosh_init")
-        .count()
-        > 1
-    {
-        return Err(vec![error(
-            "the function name '__mosh_init' is reserved for module initialization",
-        )]);
-    }
-
-    let mut output =
-        String::from("declare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\n\n");
-    for (value, index) in &strings {
-        let _ = writeln!(
-            output,
-            "@.mosh.str.{index} = private unnamed_addr constant [{} x i8] c\"{}\", align 1",
-            value.len() + 1,
-            escaped_bytes(value)
-        );
-    }
-    output.push('\n');
-    output.push_str(&bodies);
-    output.push_str("define i32 @main() {\nentry:\n");
-    if module
-        .functions
-        .iter()
-        .any(|function| function.name == "__mosh_init")
-    {
-        output.push_str("  call void @mosh___mosh_init()\n");
-    }
-    if main.return_type == MirType::Int {
-        output.push_str("  %mosh.result = call i64 @mosh_user_main()\n  %mosh.exit = trunc i64 %mosh.result to i32\n  ret i32 %mosh.exit\n");
-    } else {
-        output.push_str("  call void @mosh_user_main()\n  ret i32 0\n");
-    }
-    output.push_str("}\n");
-    Ok(output)
 }
 
 #[cfg(test)]
@@ -980,6 +1098,41 @@ mod tests {
         let _ = std::fs::remove_file(&executable);
         assert!(executed.status.success());
         assert_eq!(String::from_utf8_lossy(&executed.stdout), "answer 42\n");
+    }
+
+    #[test]
+    fn native_backend_preserves_shadowed_local_storage() {
+        use std::process::Command;
+
+        let ir = compile(
+            "function main() -> Int:\n    let value = 1\n    if true:\n        let value = 2\n        print(value)\n    print(value)\n    return 0\n",
+        )
+        .unwrap();
+        let base = std::env::temp_dir().join(format!("mosh-shadow-smoke-{}", std::process::id()));
+        let ir_path = base.with_extension("ll");
+        let executable = base.with_extension("bin");
+        std::fs::write(&ir_path, ir).unwrap();
+        let compiled = Command::new("clang")
+            .arg("-x")
+            .arg("ir")
+            .arg("-O0")
+            .arg(&ir_path)
+            .arg("-o")
+            .arg(&executable)
+            .output()
+            .expect("clang must be installed for the native backend test");
+        assert!(
+            compiled.status.success(),
+            "clang rejected shadowing LLVM IR: {}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executed = Command::new(&executable)
+            .output()
+            .expect("generated shadowing executable should run");
+        let _ = std::fs::remove_file(&ir_path);
+        let _ = std::fs::remove_file(&executable);
+        assert!(executed.status.success());
+        assert_eq!(String::from_utf8_lossy(&executed.stdout), "2\n1\n");
     }
 
     #[test]
