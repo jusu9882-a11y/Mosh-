@@ -102,7 +102,7 @@ pub fn check(program: &Program) -> Result<(), Vec<TypeError>> {
                 .iter()
                 .filter_map(|parameter| {
                     checker
-                        .resolve_type(&parameter.ty)
+                        .resolve_parameter_type(&parameter.ty)
                         .map(|ty| (parameter.name.clone(), ty))
                 })
                 .collect::<Vec<_>>();
@@ -179,6 +179,16 @@ impl Checker {
         }
     }
 
+    fn resolve_parameter_type(&mut self, syntax: &TypeExpr) -> Option<Type> {
+        match self.resolve_type(syntax) {
+            Some(Type::Unit) => {
+                self.error("function parameters cannot have type Unit", syntax.span);
+                None
+            }
+            other => other,
+        }
+    }
+
     fn lookup(&self, name: &str) -> Option<Variable> {
         self.scopes
             .iter()
@@ -235,6 +245,9 @@ impl Checker {
                 self.return_types.push(result);
                 for (index, parameter) in params.iter().enumerate() {
                     if let Some(ty) = self.resolve_type(&parameter.ty) {
+                        if ty == Type::Unit {
+                            continue;
+                        }
                         if let Some(sig) = &signature {
                             if sig.parameters.get(index).copied() != Some(ty) {
                                 self.error(
@@ -293,6 +306,9 @@ impl Checker {
                     (None, Some(actual)) => actual,
                     (None, None) => Type::Unknown,
                 };
+                if final_type == Type::Unit {
+                    self.error("local bindings cannot have type Unit", *span);
+                }
                 self.define(
                     name,
                     Variable {
@@ -310,6 +326,9 @@ impl Checker {
                     .unwrap_or(Type::Unit);
                 if let Some(expected) = self.return_types.last().copied() {
                     self.expect_type(actual, expected, *span, "return type mismatch");
+                    if expected == Type::Unit && value.is_some() && actual == Type::Unit {
+                        self.error("a Unit function must use a bare return", *span);
+                    }
                 }
             }
             Stmt::If {
@@ -922,6 +941,29 @@ mod tests {
             .unwrap_err()
             .iter()
             .any(|e| e.message.contains("unknown type 'Decimal'")));
+    }
+
+    #[test]
+    fn rejects_unit_local_bindings_and_parameters() {
+        let local_errors =
+            checked("function main():\n    let value: Unit\n").unwrap_err();
+        assert!(local_errors
+            .iter()
+            .any(|error| error.message.contains("local bindings cannot have type Unit")));
+
+        let parameter_errors =
+            checked("function greet(value: Unit):\n    print(\"hello\")\n").unwrap_err();
+        assert!(parameter_errors
+            .iter()
+            .any(|error| error.message.contains("function parameters cannot have type Unit")));
+    }
+
+    #[test]
+    fn rejects_explicit_unit_return_expressions() {
+        let errors = checked("function main():\n    return print(1)\n").unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("a Unit function must use a bare return")));
     }
 
     #[test]
