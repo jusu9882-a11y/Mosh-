@@ -91,7 +91,7 @@ impl fmt::Display for OwnershipError {
             Self::UseAfterMove(place) => write!(f, "use of moved value '{}'", place.root),
             Self::MoveWhileBorrowed(place) => {
                 write!(f, "cannot move '{}' while it is borrowed", place.root)
-            },
+            }
             Self::ReadWhileExclusivelyBorrowed(place) => write!(
                 f,
                 "cannot read '{}' while it is exclusively borrowed",
@@ -99,7 +99,7 @@ impl fmt::Display for OwnershipError {
             ),
             Self::WriteWhileBorrowed(place) => {
                 write!(f, "cannot write '{}' while it is borrowed", place.root)
-            },
+            }
             Self::ConflictingBorrow {
                 place,
                 requested: BorrowKind::Shared,
@@ -172,7 +172,11 @@ impl OwnershipState {
     }
 
     pub fn assign(&mut self, place: Place) -> Result<(), OwnershipError> {
-        if self.borrows.values().any(|borrow| borrow.place.overlaps(&place)) {
+        if self
+            .borrows
+            .values()
+            .any(|borrow| borrow.place.overlaps(&place))
+        {
             return Err(OwnershipError::WriteWhileBorrowed(place));
         }
         // Reinitializing an aggregate restores all moved subplaces beneath it;
