@@ -534,7 +534,7 @@ impl<'a> FunctionEmitter<'a> {
                     Err(errors) => self.errors.extend(errors),
                 }
             }
-            InstructionKind::Call { name: _, arguments } if name == "print" => {
+            InstructionKind::Call { name, arguments } if name == "print" => {
                 let mut format_text = String::new();
                 let mut rendered_arguments = Vec::new();
                 for argument in arguments {
@@ -931,6 +931,41 @@ mod tests {
             "clang rejected generated LLVM IR: {}",
             String::from_utf8_lossy(&result.stderr)
         );
+    }
+
+    #[test]
+    fn native_executable_runs_compiled_mosh_program() {
+        use std::process::Command;
+
+        let ir = compile(
+            "function add(a: Int, b: Int) -> Int:\n    return a + b\nfunction main() -> Int:\n    let answer = add(20, 22)\n    print(\"answer\", answer)\n    return 0\n",
+        )
+        .unwrap();
+        let base = std::env::temp_dir().join(format!("mosh-native-smoke-{}", std::process::id()));
+        let ir_path = base.with_extension("ll");
+        let executable = base.with_extension("bin");
+        std::fs::write(&ir_path, ir).unwrap();
+        let compiled = Command::new("clang")
+            .arg("-x")
+            .arg("ir")
+            .arg("-O0")
+            .arg(&ir_path)
+            .arg("-o")
+            .arg(&executable)
+            .output()
+            .expect("clang must be installed for the native backend test");
+        assert!(
+            compiled.status.success(),
+            "clang rejected generated LLVM IR: {}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executed = Command::new(&executable)
+            .output()
+            .expect("generated native executable should run");
+        let _ = std::fs::remove_file(&ir_path);
+        let _ = std::fs::remove_file(&executable);
+        assert!(executed.status.success());
+        assert_eq!(String::from_utf8_lossy(&executed.stdout), "answer 42\n");
     }
 
     #[test]
