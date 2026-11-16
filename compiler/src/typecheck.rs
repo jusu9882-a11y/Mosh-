@@ -70,7 +70,7 @@ struct Variable {
     initialized: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct Scope {
     variables: HashMap<String, Variable>,
 }
