@@ -857,10 +857,8 @@ mod tests {
 
     #[test]
     fn rejects_unknown_struct_field_types() {
-        let errors = checked(
-            "struct Point:\n    x: MissingType\nfunction main():\n    return\n",
-        )
-        .unwrap_err();
+        let errors = checked("struct Point:\n    x: MissingType\nfunction main():\n    return\n")
+            .unwrap_err();
         assert!(errors
             .iter()
             .any(|error| error.message.contains("unknown type 'MissingType'")));
