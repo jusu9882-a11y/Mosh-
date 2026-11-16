@@ -1220,7 +1220,7 @@ impl Builder {
                     *span,
                 );
                 None
-            },
+            }
             Expr::Unary {
                 operator,
                 operand,
