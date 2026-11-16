@@ -987,7 +987,7 @@ mod tests {
         use std::process::Command;
 
         let ir = compile(
-            "function main() -> Int:\n    let mut count: Int = 0\n    while count < 3:\n        count = count + 1\n    print(count)\n    return 0\n",
+            "function main() -> Int:\n    mut count: Int = 0\n    while count < 3:\n        count = count + 1\n    print(count)\n    return 0\n",
         )
         .unwrap();
         let base = std::env::temp_dir().join(format!("mosh-loop-smoke-{}", std::process::id()));
