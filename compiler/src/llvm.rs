@@ -1325,9 +1325,12 @@ mod tests {
         use std::process::Command;
 
         let ir = compile(
-            "function main() -> Int:\n    if \"line\\nbreak\" == \"line\\nbreak\":\n        print(\"line\\nbreak\")\n    return 0\n",
+            r#"function main() -> Int:
+    if "line\nbreak" == "line\nbreak":
+        print("line\nbreak")
+    return 0
+"#,
         )
-        .unwrap();
         let base = std::env::temp_dir().join(format!("mosh-string-smoke-{}", std::process::id()));
         let ir_path = base.with_extension("ll");
         let executable = base.with_extension("bin");
