@@ -772,6 +772,36 @@ mod tests {
     }
 
     #[test]
+    fn type_checks_range_for_loops() {
+        assert!(checked(
+            "function main() -> Unit:\n    for index in range(5):\n        print(index)\n    for other in range(2, 5):\n        print(other)\n",
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn rejects_invalid_range_for_loop_iterables_and_arguments() {
+        assert!(checked(
+            "function main() -> Unit:\n    for index in range(1.5):\n        print(index)\n",
+        )
+        .unwrap_err()
+        .iter()
+        .any(|error| error.message.contains("range() arguments must be Int")));
+        assert!(checked(
+            "function main() -> Unit:\n    for index in range(1, 2, 3):\n        print(index)\n",
+        )
+        .unwrap_err()
+        .iter()
+        .any(|error| error.message.contains("one or two Int arguments")));
+        assert!(checked(
+            "function main() -> Unit:\n    let values = 3\n    for index in values:\n        print(index)\n",
+        )
+        .unwrap_err()
+        .iter()
+        .any(|error| error.message.contains("for-loop iterable must be range")));
+    }
+
+    #[test]
     fn allows_print_as_the_provisional_polymorphic_builtin() {
         assert!(checked("print(1, \"hello\", true)\n").is_ok());
     }
