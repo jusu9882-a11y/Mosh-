@@ -44,6 +44,12 @@ impl Place {
         self
     }
 
+    fn is_prefix_of(&self, other: &Self) -> bool {
+        self.root == other.root
+            && self.projections.len() <= other.projections.len()
+            && self.projections == other.projections[..self.projections.len()]
+    }
+
     fn overlaps(&self, other: &Self) -> bool {
         if self.root != other.root {
             return false;
@@ -129,6 +135,7 @@ impl std::error::Error for OwnershipError {}
 #[derive(Debug, Default)]
 pub struct OwnershipState {
     moved: HashSet<Place>,
+    reinitialized: HashSet<Place>,
     borrows: HashMap<u64, ActiveBorrow>,
     next_borrow: u64,
 }
@@ -139,7 +146,14 @@ impl OwnershipState {
     }
 
     fn ensure_live(&self, place: &Place) -> Result<(), OwnershipError> {
-        if self.moved.iter().any(|moved| moved.overlaps(place)) {
+        if self.moved.iter().any(|moved| {
+            moved.overlaps(place)
+                && !(moved.is_prefix_of(place)
+                    && self
+                        .reinitialized
+                        .iter()
+                        .any(|initialized| moved.is_prefix_of(initialized) && initialized.is_prefix_of(place)))
+        }) {
             Err(OwnershipError::UseAfterMove(place.clone()))
         } else {
             Ok(())
@@ -167,6 +181,8 @@ impl OwnershipState {
         {
             return Err(OwnershipError::MoveWhileBorrowed(place));
         }
+        self.reinitialized
+            .retain(|initialized| !place.is_prefix_of(initialized));
         self.moved.insert(place);
         Ok(())
     }
@@ -179,9 +195,15 @@ impl OwnershipState {
         {
             return Err(OwnershipError::WriteWhileBorrowed(place));
         }
-        // Reinitializing an aggregate restores all moved subplaces beneath it;
-        // assigning a field restores that field without reviving its siblings.
-        self.moved.retain(|moved| !place.overlaps(moved));
+        // Reinitializing an aggregate clears moved descendants. Reinitializing
+        // a field inside a moved aggregate records only that field as live;
+        // it must not accidentally revive the aggregate's other fields.
+        self.moved.retain(|moved| !place.is_prefix_of(moved));
+        self.reinitialized
+            .retain(|initialized| !place.is_prefix_of(initialized));
+        if self.moved.iter().any(|moved| moved.is_prefix_of(&place)) {
+            self.reinitialized.insert(place);
+        }
         Ok(())
     }
 
@@ -214,7 +236,7 @@ impl OwnershipState {
     }
 
     pub fn is_moved(&self, place: &Place) -> bool {
-        self.moved.iter().any(|moved| moved.overlaps(place))
+        self.ensure_live(place).is_err()
     }
 
     pub fn active_borrow_count(&self) -> usize {
