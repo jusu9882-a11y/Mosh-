@@ -32,6 +32,8 @@ jobs:
         run: cargo test --all-targets
       - name: Check compilation
         run: cargo check --all-targets
+      - name: Run Clippy with warnings denied
+        run: cargo clippy --all-targets -- -D warnings
       - name: Build and run the Mosh hello-world example
         run: |
           cargo build --release
