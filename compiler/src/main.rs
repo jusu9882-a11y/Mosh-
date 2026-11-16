@@ -355,7 +355,7 @@ mod tests {
         let base = std::env::temp_dir().join(format!("moshc-cli-smoke-{}", std::process::id()));
         let source = base.with_extension("mosh");
         let executable = base.with_extension("bin");
-        std::fs::write(&source, "function main() -> Int:\\n    return 42\\n").unwrap();
+        std::fs::write(&source, "function main() -> Int:\n    return 42\n").unwrap();
 
         let source_path = source.to_str().unwrap();
         let executable_path = executable.to_str().unwrap();
