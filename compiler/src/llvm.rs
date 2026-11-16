@@ -82,7 +82,11 @@ fn collect_signatures(module: &MirModule) -> HashMap<String, (Vec<MirType>, MirT
             (
                 function.name.clone(),
                 (
-                    function.parameters.iter().map(|parameter| parameter.ty).collect(),
+                    function
+                        .parameters
+                        .iter()
+                        .map(|parameter| parameter.ty)
+                        .collect(),
                     function.return_type,
                 ),
             )
@@ -104,42 +108,68 @@ fn infer_value_type(
     if !active.insert(value) {
         return None;
     }
-    let inferred = definitions.get(&value).and_then(|instruction| match &instruction.kind {
-        InstructionKind::Integer(_) => Some(MirType::Int),
-        InstructionKind::Float(_) => Some(MirType::Float),
-        InstructionKind::String(_) => Some(MirType::String),
-        InstructionKind::Boolean(_) => Some(MirType::Bool),
-        InstructionKind::Load { name } => locals.get(name).copied(),
-        InstructionKind::Unary { operator, operand } => {
-            let operand_type = infer_value_type(
-                *operand, definitions, locals, signatures, cache, active,
-            )?;
-            match operator {
-                TokenKind::Minus if matches!(operand_type, MirType::Int | MirType::Float) => {
-                    Some(operand_type)
+    let inferred = definitions
+        .get(&value)
+        .and_then(|instruction| match &instruction.kind {
+            InstructionKind::Integer(_) => Some(MirType::Int),
+            InstructionKind::Float(_) => Some(MirType::Float),
+            InstructionKind::String(_) => Some(MirType::String),
+            InstructionKind::Boolean(_) => Some(MirType::Bool),
+            InstructionKind::Load { name } => locals.get(name).copied(),
+            InstructionKind::Unary { operator, operand } => {
+                let operand_type =
+                    infer_value_type(*operand, definitions, locals, signatures, cache, active)?;
+                match operator {
+                    TokenKind::Minus if matches!(operand_type, MirType::Int | MirType::Float) => {
+                        Some(operand_type)
+                    }
+                    TokenKind::Bang if operand_type == MirType::Bool => Some(MirType::Bool),
+                    _ => None,
                 }
-                TokenKind::Bang if operand_type == MirType::Bool => Some(MirType::Bool),
-                _ => None,
             }
-        }
-        InstructionKind::Binary { left, operator, right } => {
-            let left = infer_value_type(*left, definitions, locals, signatures, cache, active)?;
-            let right = infer_value_type(*right, definitions, locals, signatures, cache, active)?;
-            match operator {
-                TokenKind::Plus | TokenKind::Minus | TokenKind::Star | TokenKind::Slash
-                | TokenKind::Percent if left == right && matches!(left, MirType::Int | MirType::Float) => Some(left),
-                TokenKind::Less | TokenKind::LessEqual | TokenKind::Greater | TokenKind::GreaterEqual
-                    if left == right && matches!(left, MirType::Int | MirType::Float) => Some(MirType::Bool),
-                TokenKind::Equal | TokenKind::NotEqual if left == right && left != MirType::Unit => Some(MirType::Bool),
-                TokenKind::Ampersand | TokenKind::Pipe | TokenKind::Caret
-                    if left == MirType::Int && right == MirType::Int => Some(MirType::Int),
-                _ => None,
+            InstructionKind::Binary {
+                left,
+                operator,
+                right,
+            } => {
+                let left = infer_value_type(*left, definitions, locals, signatures, cache, active)?;
+                let right =
+                    infer_value_type(*right, definitions, locals, signatures, cache, active)?;
+                match operator {
+                    TokenKind::Plus
+                    | TokenKind::Minus
+                    | TokenKind::Star
+                    | TokenKind::Slash
+                    | TokenKind::Percent
+                        if left == right && matches!(left, MirType::Int | MirType::Float) =>
+                    {
+                        Some(left)
+                    }
+                    TokenKind::Less
+                    | TokenKind::LessEqual
+                    | TokenKind::Greater
+                    | TokenKind::GreaterEqual
+                        if left == right && matches!(left, MirType::Int | MirType::Float) =>
+                    {
+                        Some(MirType::Bool)
+                    }
+                    TokenKind::Equal | TokenKind::NotEqual
+                        if left == right && left != MirType::Unit =>
+                    {
+                        Some(MirType::Bool)
+                    }
+                    TokenKind::Ampersand | TokenKind::Pipe | TokenKind::Caret
+                        if left == MirType::Int && right == MirType::Int =>
+                    {
+                        Some(MirType::Int)
+                    }
+                    _ => None,
+                }
             }
-        }
-        InstructionKind::Call { name, .. } if name == "print" => Some(MirType::Unit),
-        InstructionKind::Call { name, .. } => signatures.get(name).map(|(_, result)| *result),
-        InstructionKind::Declare { .. } | InstructionKind::Store { .. } => None,
-    });
+            InstructionKind::Call { name, .. } if name == "print" => Some(MirType::Unit),
+            InstructionKind::Call { name, .. } => signatures.get(name).map(|(_, result)| *result),
+            InstructionKind::Declare { .. } | InstructionKind::Store { .. } => None,
+        });
     active.remove(&value);
     cache.insert(value, inferred);
     inferred
@@ -151,7 +181,10 @@ fn function_locals(
 ) -> Result<HashMap<String, MirType>> {
     let mut locals = HashMap::new();
     for parameter in &function.parameters {
-        if locals.insert(parameter.name.clone(), parameter.ty).is_some() {
+        if locals
+            .insert(parameter.name.clone(), parameter.ty)
+            .is_some()
+        {
             return Err(vec![error(format!(
                 "function '{}' has duplicate local name '{}'",
                 function.name, parameter.name
@@ -269,7 +302,9 @@ impl<'a> FunctionEmitter<'a> {
                         self.values.insert(id, value.to_string());
                     }
                 }
-                Err(_) => self.errors.push(error(format!("integer literal '{text}' is outside the supported Int range"))),
+                Err(_) => self.errors.push(error(format!(
+                    "integer literal '{text}' is outside the supported Int range"
+                ))),
             },
             InstructionKind::Float(text) => match text.parse::<f64>() {
                 Ok(value) if value.is_finite() => {
@@ -277,11 +312,14 @@ impl<'a> FunctionEmitter<'a> {
                         self.values.insert(id, format!("{value:.17e}"));
                     }
                 }
-                _ => self.errors.push(error(format!("invalid or non-finite Float literal '{text}'"))),
+                _ => self.errors.push(error(format!(
+                    "invalid or non-finite Float literal '{text}'"
+                ))),
             },
             InstructionKind::Boolean(value) => {
                 if let Some(id) = instruction.result {
-                    self.values.insert(id, if *value { "true" } else { "false" }.into());
+                    self.values
+                        .insert(id, if *value { "true" } else { "false" }.into());
                 }
             }
             InstructionKind::String(value) => {
@@ -298,7 +336,9 @@ impl<'a> FunctionEmitter<'a> {
                             let _ = writeln!(
                                 self.output,
                                 "  store {} {}, ptr %local.{}",
-                                llvm_type(ty), operand, local_slot(name)
+                                llvm_type(ty),
+                                operand,
+                                local_slot(name)
                             );
                         }
                         Err(errors) => self.errors.extend(errors),
@@ -307,14 +347,18 @@ impl<'a> FunctionEmitter<'a> {
             }
             InstructionKind::Load { name } => {
                 let Some(ty) = self.locals.get(name).copied() else {
-                    self.errors.push(error(format!("unknown local '{name}' during LLVM generation")));
+                    self.errors.push(error(format!(
+                        "unknown local '{name}' during LLVM generation"
+                    )));
                     return;
                 };
                 if let Some(id) = instruction.result {
                     let _ = writeln!(
                         self.output,
                         "  %v{} = load {}, ptr %local.{}",
-                        id.0, llvm_type(ty), local_slot(name)
+                        id.0,
+                        llvm_type(ty),
+                        local_slot(name)
                     );
                     self.values.insert(id, format!("%v{}", id.0));
                 }
@@ -325,17 +369,22 @@ impl<'a> FunctionEmitter<'a> {
                         let _ = writeln!(
                             self.output,
                             "  store {} {}, ptr %local.{}",
-                            llvm_type(ty), operand, local_slot(name)
+                            llvm_type(ty),
+                            operand,
+                            local_slot(name)
                         );
                     }
-                    (None, _) => self.errors.push(error(format!("unknown local '{name}' during LLVM generation"))),
+                    (None, _) => self.errors.push(error(format!(
+                        "unknown local '{name}' during LLVM generation"
+                    ))),
                     (_, Err(errors)) => self.errors.extend(errors),
                 }
             }
             InstructionKind::Unary { operator, operand } => {
                 let Some(id) = instruction.result else { return };
                 let Some(ty) = self.value_types.get(&id).copied() else {
-                    self.errors.push(error("cannot infer unary expression type"));
+                    self.errors
+                        .push(error("cannot infer unary expression type"));
                     return;
                 };
                 match self.value(*operand) {
@@ -345,7 +394,8 @@ impl<'a> FunctionEmitter<'a> {
                             (TokenKind::Minus, MirType::Float) => format!("fneg double {value}"),
                             (TokenKind::Bang, MirType::Bool) => format!("xor i1 {value}, true"),
                             _ => {
-                                self.errors.push(error("unsupported unary operator/type in LLVM backend"));
+                                self.errors
+                                    .push(error("unsupported unary operator/type in LLVM backend"));
                                 return;
                             }
                         };
@@ -355,14 +405,21 @@ impl<'a> FunctionEmitter<'a> {
                     Err(errors) => self.errors.extend(errors),
                 }
             }
-            InstructionKind::Binary { left, operator, right } => {
+            InstructionKind::Binary {
+                left,
+                operator,
+                right,
+            } => {
                 let Some(id) = instruction.result else { return };
                 let Some(ty) = self.value_types.get(&id).copied() else {
-                    self.errors.push(error("cannot infer binary expression type"));
+                    self.errors
+                        .push(error("cannot infer binary expression type"));
                     return;
                 };
                 let left_type = self.value_types.get(left).copied();
-                let operands = self.value(*left).and_then(|left| self.value(*right).map(|right| (left, right)));
+                let operands = self
+                    .value(*left)
+                    .and_then(|left| self.value(*right).map(|right| (left, right)));
                 match operands {
                     Ok((left, right)) => {
                         let op = match (operator, ty) {
@@ -370,13 +427,27 @@ impl<'a> FunctionEmitter<'a> {
                             (TokenKind::Minus, MirType::Int) => format!("sub i64 {left}, {right}"),
                             (TokenKind::Star, MirType::Int) => format!("mul i64 {left}, {right}"),
                             (TokenKind::Slash, MirType::Int) => format!("sdiv i64 {left}, {right}"),
-                            (TokenKind::Percent, MirType::Int) => format!("srem i64 {left}, {right}"),
-                            (TokenKind::Plus, MirType::Float) => format!("fadd double {left}, {right}"),
-                            (TokenKind::Minus, MirType::Float) => format!("fsub double {left}, {right}"),
-                            (TokenKind::Star, MirType::Float) => format!("fmul double {left}, {right}"),
-                            (TokenKind::Slash, MirType::Float) => format!("fdiv double {left}, {right}"),
-                            (TokenKind::Percent, MirType::Float) => format!("frem double {left}, {right}"),
-                            (TokenKind::Ampersand, MirType::Int) => format!("and i64 {left}, {right}"),
+                            (TokenKind::Percent, MirType::Int) => {
+                                format!("srem i64 {left}, {right}")
+                            }
+                            (TokenKind::Plus, MirType::Float) => {
+                                format!("fadd double {left}, {right}")
+                            }
+                            (TokenKind::Minus, MirType::Float) => {
+                                format!("fsub double {left}, {right}")
+                            }
+                            (TokenKind::Star, MirType::Float) => {
+                                format!("fmul double {left}, {right}")
+                            }
+                            (TokenKind::Slash, MirType::Float) => {
+                                format!("fdiv double {left}, {right}")
+                            }
+                            (TokenKind::Percent, MirType::Float) => {
+                                format!("frem double {left}, {right}")
+                            }
+                            (TokenKind::Ampersand, MirType::Int) => {
+                                format!("and i64 {left}, {right}")
+                            }
                             (TokenKind::Pipe, MirType::Int) => format!("or i64 {left}, {right}"),
                             (TokenKind::Caret, MirType::Int) => format!("xor i64 {left}, {right}"),
                             (TokenKind::Equal, MirType::Bool) => match left_type {
@@ -430,7 +501,9 @@ impl<'a> FunctionEmitter<'a> {
                                 }
                             },
                             _ => {
-                                self.errors.push(error(format!("unsupported binary operation {operator:?} in LLVM backend")));
+                                self.errors.push(error(format!(
+                                    "unsupported binary operation {operator:?} in LLVM backend"
+                                )));
                                 return;
                             }
                         };
@@ -442,45 +515,65 @@ impl<'a> FunctionEmitter<'a> {
             }
             InstructionKind::Call { name, arguments } if name == "print" => {
                 if arguments.len() != 1 {
-                    self.errors.push(error("print currently requires exactly one argument"));
+                    self.errors
+                        .push(error("print currently requires exactly one argument"));
                     return;
                 }
                 let argument = arguments[0];
                 let Some(ty) = self.value_types.get(&argument).copied() else {
-                    self.errors.push(error("cannot determine print argument type"));
+                    self.errors
+                        .push(error("cannot determine print argument type"));
                     return;
                 };
                 match self.value(argument) {
-                    Ok(value) => match ty {
-                        MirType::String => {
-                            let format = string_constant("%s\n", self.strings);
-                            let _ = writeln!(self.output, "  call i32 (ptr, ...) @printf(ptr {format}, ptr {value})");
+                    Ok(value) => {
+                        match ty {
+                            MirType::String => {
+                                let format = string_constant("%s\n", self.strings);
+                                let _ = writeln!(
+                                    self.output,
+                                    "  call i32 (ptr, ...) @printf(ptr {format}, ptr {value})"
+                                );
+                            }
+                            MirType::Int => {
+                                let format = string_constant("%lld\n", self.strings);
+                                let _ = writeln!(
+                                    self.output,
+                                    "  call i32 (ptr, ...) @printf(ptr {format}, i64 {value})"
+                                );
+                            }
+                            MirType::Float => {
+                                let format = string_constant("%g\n", self.strings);
+                                let _ = writeln!(
+                                    self.output,
+                                    "  call i32 (ptr, ...) @printf(ptr {format}, double {value})"
+                                );
+                            }
+                            MirType::Bool => {
+                                let format = string_constant("%d\n", self.strings);
+                                let _ = writeln!(
+                                    self.output,
+                                    "  %print.bool.{} = zext i1 {value} to i32",
+                                    argument.0
+                                );
+                                let _ = writeln!(self.output, "  call i32 (ptr, ...) @printf(ptr {format}, i32 %print.bool.{})", argument.0);
+                            }
+                            MirType::Unit => self.errors.push(error("cannot print a Unit value")),
                         }
-                        MirType::Int => {
-                            let format = string_constant("%lld\n", self.strings);
-                            let _ = writeln!(self.output, "  call i32 (ptr, ...) @printf(ptr {format}, i64 {value})");
-                        }
-                        MirType::Float => {
-                            let format = string_constant("%g\n", self.strings);
-                            let _ = writeln!(self.output, "  call i32 (ptr, ...) @printf(ptr {format}, double {value})");
-                        }
-                        MirType::Bool => {
-                            let format = string_constant("%d\n", self.strings);
-                            let _ = writeln!(self.output, "  %print.bool.{} = zext i1 {value} to i32", argument.0);
-                            let _ = writeln!(self.output, "  call i32 (ptr, ...) @printf(ptr {format}, i32 %print.bool.{})", argument.0);
-                        }
-                        MirType::Unit => self.errors.push(error("cannot print a Unit value")),
-                    },
+                    }
                     Err(errors) => self.errors.extend(errors),
                 }
             }
             InstructionKind::Call { name, arguments } => {
                 let Some((parameter_types, result_type)) = self.signatures.get(name) else {
-                    self.errors.push(error(format!("unknown function '{name}' during LLVM generation")));
+                    self.errors.push(error(format!(
+                        "unknown function '{name}' during LLVM generation"
+                    )));
                     return;
                 };
                 if arguments.len() != parameter_types.len() {
-                    self.errors.push(error(format!("wrong argument count for function '{name}'")));
+                    self.errors
+                        .push(error(format!("wrong argument count for function '{name}'")));
                     return;
                 }
                 let mut rendered = Vec::new();
@@ -490,7 +583,12 @@ impl<'a> FunctionEmitter<'a> {
                         Err(errors) => self.errors.extend(errors),
                     }
                 }
-                let call = format!("call {} {}({})", llvm_type(*result_type), function_symbol(name), rendered.join(", "));
+                let call = format!(
+                    "call {} {}({})",
+                    llvm_type(*result_type),
+                    function_symbol(name),
+                    rendered.join(", ")
+                );
                 if *result_type == MirType::Unit {
                     let _ = writeln!(self.output, "  {call}");
                 } else if let Some(id) = instruction.result {
@@ -506,7 +604,11 @@ impl<'a> FunctionEmitter<'a> {
             Terminator::Jump(target) => {
                 let _ = writeln!(self.output, "  br label %bb{}", target.0);
             }
-            Terminator::Branch { condition, then_block, else_block } => match self.value(*condition) {
+            Terminator::Branch {
+                condition,
+                then_block,
+                else_block,
+            } => match self.value(*condition) {
                 Ok(value) => {
                     let _ = writeln!(
                         self.output,
@@ -516,45 +618,71 @@ impl<'a> FunctionEmitter<'a> {
                 }
                 Err(errors) => self.errors.extend(errors),
             },
-            Terminator::Return(value) => {
-                match value {
-                    Some(value) => match self.value(*value) {
-                        Ok(value) => {
-                            let _ = writeln!(
-                                self.output,
-                                "  ret {} {value}",
-                                llvm_type(self.function.return_type)
-                            );
-                        }
-                        Err(errors) => self.errors.extend(errors),
-                    },
-                    None => self.output.push_str("  ret void\n"),
-                }
-            }
+            Terminator::Return(value) => match value {
+                Some(value) => match self.value(*value) {
+                    Ok(value) => {
+                        let _ = writeln!(
+                            self.output,
+                            "  ret {} {value}",
+                            llvm_type(self.function.return_type)
+                        );
+                    }
+                    Err(errors) => self.errors.extend(errors),
+                },
+                None => self.output.push_str("  ret void\n"),
+            },
         }
     }
 
     fn emit(mut self) -> Result<String> {
         let symbol = function_symbol(&self.function.name);
         let return_type = llvm_type(self.function.return_type);
-        let parameters = self.function.parameters.iter().enumerate()
+        let parameters = self
+            .function
+            .parameters
+            .iter()
+            .enumerate()
             .map(|(index, parameter)| format!("{} %arg{index}", llvm_type(parameter.ty)))
-            .collect::<Vec<_>>().join(", ");
-        let _ = writeln!(self.output, "define {return_type} {symbol}({parameters}) {{");
+            .collect::<Vec<_>>()
+            .join(", ");
+        let _ = writeln!(
+            self.output,
+            "define {return_type} {symbol}({parameters}) {{"
+        );
 
         for block in &self.function.blocks {
             let _ = writeln!(self.output, "bb{}:", block.id.0);
             if block.id.0 == 0 {
                 for (index, parameter) in self.function.parameters.iter().enumerate() {
-                    let _ = writeln!(self.output, "  %local.{} = alloca {}", local_slot(&parameter.name), llvm_type(parameter.ty));
-                    let _ = writeln!(self.output, "  store {} %arg{index}, ptr %local.{}", llvm_type(parameter.ty), local_slot(&parameter.name));
+                    let _ = writeln!(
+                        self.output,
+                        "  %local.{} = alloca {}",
+                        local_slot(&parameter.name),
+                        llvm_type(parameter.ty)
+                    );
+                    let _ = writeln!(
+                        self.output,
+                        "  store {} %arg{index}, ptr %local.{}",
+                        llvm_type(parameter.ty),
+                        local_slot(&parameter.name)
+                    );
                 }
                 let mut emitted = HashSet::new();
-                for instruction in self.function.blocks.iter().flat_map(|b| b.instructions.iter()) {
+                for instruction in self
+                    .function
+                    .blocks
+                    .iter()
+                    .flat_map(|b| b.instructions.iter())
+                {
                     if let InstructionKind::Declare { name, .. } = &instruction.kind {
                         if emitted.insert(name.clone()) {
                             let ty = self.locals[name];
-                            let _ = writeln!(self.output, "  %local.{} = alloca {}", local_slot(name), llvm_type(ty));
+                            let _ = writeln!(
+                                self.output,
+                                "  %local.{} = alloca {}",
+                                local_slot(name),
+                                llvm_type(ty)
+                            );
                         }
                     }
                 }
@@ -565,7 +693,10 @@ impl<'a> FunctionEmitter<'a> {
             if let Some(terminator) = &block.terminator {
                 self.emit_terminator(terminator);
             } else {
-                self.errors.push(error(format!("block {} in '{}' has no terminator", block.id.0, self.function.name)));
+                self.errors.push(error(format!(
+                    "block {} in '{}' has no terminator",
+                    block.id.0, self.function.name
+                )));
             }
         }
         self.output.push_str("}\n");
@@ -592,7 +723,10 @@ fn local_slot(name: &str) -> String {
 /// Generate textual LLVM IR for the currently supported primitive MIR subset.
 pub fn generate(module: &MirModule) -> Result<String> {
     if let Err(errors) = validate(module) {
-        return Err(errors.into_iter().map(|error| error(error.message)).collect());
+        return Err(errors
+            .into_iter()
+            .map(|error| error(error.message))
+            .collect());
     }
     let signatures = collect_signatures(module);
     let mut strings = HashMap::<String, usize>::new();
@@ -611,10 +745,20 @@ pub fn generate(module: &MirModule) -> Result<String> {
         return Err(errors);
     }
 
-    if !module.functions.iter().any(|function| function.name == "main") {
-        return Err(vec![error("native executable requires a function named 'main'")]);
+    if !module
+        .functions
+        .iter()
+        .any(|function| function.name == "main")
+    {
+        return Err(vec![error(
+            "native executable requires a function named 'main'",
+        )]);
     }
-    let main = module.functions.iter().find(|function| function.name == "main").unwrap();
+    let main = module
+        .functions
+        .iter()
+        .find(|function| function.name == "main")
+        .unwrap();
     if !matches!(main.return_type, MirType::Int | MirType::Unit) {
         return Err(vec![error("main must return Int or Unit")]);
     }
@@ -631,7 +775,11 @@ pub fn generate(module: &MirModule) -> Result<String> {
     output.push('\n');
     output.push_str(&bodies);
     output.push_str("define i32 @main() {\nentry:\n");
-    if module.functions.iter().any(|function| function.name == "__mosh_init") {
+    if module
+        .functions
+        .iter()
+        .any(|function| function.name == "__mosh_init")
+    {
         output.push_str("  call void @mosh___mosh_init()\n");
     }
     if main.return_type == MirType::Int {
