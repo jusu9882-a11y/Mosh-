@@ -38,3 +38,19 @@ jobs:
           ./target/release/moshc build ../examples/hello.mosh -o target/hello
           output="$(./target/hello)"
           test "$output" = "Hello, Mosh!"
+      - name: Build and run the Mosh control-flow example
+        run: |
+          ./target/release/moshc build ../examples/control_flow.mosh -o target/control-flow
+          output="$(./target/control-flow)"
+          test "$output" = "sum=15"
+      - name: Upload Linux compiler preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: mosh-compiler-preview-linux-x86_64
+          path: |
+            compiler/target/release/moshc
+            README.md
+            docs/SPECIFICATION.md
+            examples/*.mosh
+          if-no-files-found: error
+          retention-days: 7
