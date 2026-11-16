@@ -398,7 +398,7 @@ impl Checker {
                     .as_ref()
                     .is_some_and(|body| block_guarantees_return(body));
                 self.ownership = match (then_returns, else_returns, else_body.is_some()) {
-                    (true, false, true) => ownership_after_else,
+                    (true, _, false) | (true, false, true) => ownership_after_else,
                     (false, true, true) => ownership_after_then,
                     _ => OwnershipState::join(&[
                         &ownership_after_then,
@@ -883,6 +883,54 @@ mod tests {
 
         let else_returns = "function choose(flag: Bool) -> Int:\n    mut value: Int\n    if flag:\n        value = 7\n    else:\n        return 0\n    return value\n";
         assert!(checked(else_returns).is_ok());
+    }
+
+    #[test]
+    fn moving_a_string_binding_rejects_later_use() {
+        let source = "function main():\n    let first: String = \"one\"\n    let second: String = first\n    print(first)\n    return\n";
+        let errors = checked(source).unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("use of moved value")));
+    }
+
+    #[test]
+    fn passing_a_string_to_a_function_moves_the_argument() {
+        let source = "function consume(value: String):\n    return\nfunction main():\n    let text: String = \"owned\"\n    consume(text)\n    print(text)\n    return\n";
+        let errors = checked(source).unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("use of moved value")));
+    }
+
+    #[test]
+    fn printing_a_string_borrows_it_without_consuming_it() {
+        let source = "function main():\n    let text: String = \"hello\"\n    print(text)\n    print(text)\n    return\n";
+        assert!(checked(source).is_ok());
+    }
+
+    #[test]
+    fn assigning_a_new_string_reinitializes_a_moved_binding() {
+        let source = "function main():\n    mut text: String = \"first\"\n    let moved: String = text\n    text = \"second\"\n    print(text)\n    return\n";
+        assert!(checked(source).is_ok());
+    }
+
+    #[test]
+    fn string_moves_are_merged_across_if_branches() {
+        let source = "function consume(value: String):\n    return\nfunction main(flag: Bool):\n    let text: String = \"branch\"\n    if flag:\n        consume(text)\n    print(text)\n    return\n";
+        let errors = checked(source).unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("use of moved value")));
+    }
+
+    #[test]
+    fn string_moves_inside_loops_are_conservatively_carried_out() {
+        let source = "function consume(value: String):\n    return\nfunction main(flag: Bool):\n    let text: String = \"loop\"\n    while flag:\n        consume(text)\n    print(text)\n    return\n";
+        let errors = checked(source).unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("use of moved value")));
     }
 
     #[test]
