@@ -67,9 +67,10 @@ struct FunctionType {
 struct Variable {
     ty: Type,
     mutable: bool,
+    initialized: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct Scope {
     variables: HashMap<String, Variable>,
 }
@@ -237,7 +238,11 @@ impl Checker {
                         }
                         self.define(
                             &parameter.name,
-                            Variable { ty, mutable: false },
+                            Variable {
+                                ty,
+                                mutable: false,
+                                initialized: true,
+                            },
                             parameter.span,
                         );
                     }
@@ -283,6 +288,7 @@ impl Checker {
                     Variable {
                         ty: final_type,
                         mutable: *mutable,
+                        initialized: value.is_some(),
                     },
                     *span,
                 );
@@ -309,9 +315,33 @@ impl Checker {
                     expr_span(condition),
                     "if condition must be Bool",
                 );
+                let before = self.scopes.clone();
                 self.block(then_body);
+                let after_then = self.scopes.clone();
+                self.scopes = before.clone();
                 if let Some(body) = else_body {
                     self.block(body);
+                }
+                let after_else = self.scopes.clone();
+                for (scope_index, scope) in self.scopes.iter_mut().enumerate() {
+                    for (name, variable) in &mut scope.variables {
+                        let then_initialized = after_then
+                            .get(scope_index)
+                            .and_then(|scope| scope.variables.get(name))
+                            .is_some_and(|state| state.initialized);
+                        let else_initialized = if else_body.is_some() {
+                            after_else
+                                .get(scope_index)
+                                .and_then(|scope| scope.variables.get(name))
+                                .is_some_and(|state| state.initialized)
+                        } else {
+                            before[scope_index]
+                                .variables
+                                .get(name)
+                                .is_some_and(|state| state.initialized)
+                        };
+                        variable.initialized = then_initialized && else_initialized;
+                    }
                 }
             }
             Stmt::While {
@@ -324,7 +354,11 @@ impl Checker {
                     expr_span(condition),
                     "while condition must be Bool",
                 );
+                let before = self.scopes.clone();
                 self.block(body);
+                // A while-loop may execute zero times, so assignments made only
+                // inside its body are not definitely initialized afterwards.
+                self.scopes = before;
             }
             Stmt::For {
                 name,
@@ -335,12 +369,14 @@ impl Checker {
                 // Iterable/collection types are deliberately outside this first
                 // primitive-type milestone. Name resolution still validates it.
                 let _ = self.expression(iterable);
+                let before = self.scopes.clone();
                 self.push_scope();
                 self.define(
                     name,
                     Variable {
                         ty: Type::Unknown,
                         mutable: false,
+                        initialized: true,
                     },
                     *span,
                 );
@@ -348,6 +384,9 @@ impl Checker {
                     self.statement(child);
                 }
                 self.pop_scope();
+                // A for-loop can have zero iterations; do not carry body-only
+                // initialization facts beyond the loop.
+                self.scopes = before;
             }
             Stmt::Assign {
                 target,
@@ -374,6 +413,16 @@ impl Checker {
                                 *span,
                                 "assignment type mismatch",
                             );
+                            if variable.mutable && actual != Type::Unknown {
+                                if let Some(binding) = self
+                                    .scopes
+                                    .iter_mut()
+                                    .rev()
+                                    .find_map(|scope| scope.variables.get_mut(name))
+                                {
+                                    binding.initialized = true;
+                                }
+                            }
                         }
                         None => {}
                     }
@@ -402,8 +451,16 @@ impl Checker {
             Expr::Float { .. } => Type::Float,
             Expr::String { .. } => Type::String,
             Expr::Boolean { .. } => Type::Bool,
-            Expr::Identifier { name, .. } => match self.lookup(name) {
-                Some(variable) => variable.ty,
+            Expr::Identifier { name, span } => match self.lookup(name) {
+                Some(variable) => {
+                    if !variable.initialized {
+                        self.error(
+                            format!("binding '{name}' may be used before it is initialized"),
+                            *span,
+                        );
+                    }
+                    variable.ty
+                }
                 None => Type::Unknown,
             },
             Expr::Unary {
@@ -643,6 +700,52 @@ mod tests {
         let program = parse(&tokens).expect("source should parse");
         crate::semantic::analyze(&program).expect("source should pass name resolution");
         check(&program)
+    }
+
+    #[test]
+    fn rejects_reading_a_local_before_initialization() {
+        let errors =
+            checked("function main() -> Int:\n    mut value: Int\n    return value\n").unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("before it is initialized")));
+    }
+
+    #[test]
+    fn accepts_assignment_before_first_read() {
+        assert!(checked(
+            "function main() -> Int:\n    mut value: Int\n    value = 7\n    return value\n",
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn requires_initialization_on_every_if_branch() {
+        let source = "function main(flag: Bool) -> Int:\n    mut value: Int\n    if flag:\n        value = 1\n    return value\n";
+        assert!(checked(source)
+            .unwrap_err()
+            .iter()
+            .any(|error| error.message.contains("before it is initialized")));
+        let both_branches = "function main(flag: Bool) -> Int:\n    mut value: Int\n    if flag:\n        value = 1\n    else:\n        value = 2\n    return value\n";
+        assert!(checked(both_branches).is_ok());
+    }
+
+    #[test]
+    fn for_loop_assignment_is_not_assumed_to_execute() {
+        let source = "function main() -> Int:\n    mut value: Int\n    for item in 1:\n        value = item\n    return value\n";
+        assert!(checked(source)
+            .unwrap_err()
+            .iter()
+            .any(|error| error.message.contains("before it is initialized")));
+    }
+
+    #[test]
+    fn loop_body_assignment_is_not_assumed_to_execute() {
+        let source = "function main() -> Int:\n    mut value: Int\n    while false:\n        value = 1\n    return value\n";
+        assert!(checked(source)
+            .unwrap_err()
+            .iter()
+            .any(|error| error.message.contains("before it is initialized")));
     }
 
     #[test]
