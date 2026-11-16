@@ -152,7 +152,9 @@ impl OwnershipState {
                     && self
                         .reinitialized
                         .iter()
-                        .any(|initialized| moved.is_prefix_of(initialized) && initialized.is_prefix_of(place)))
+                        .any(|initialized| {
+                            moved.is_prefix_of(initialized) && initialized.is_prefix_of(place)
+                        }))
         }) {
             Err(OwnershipError::UseAfterMove(place.clone()))
         } else {
@@ -280,6 +282,23 @@ mod tests {
         state.move_out(left.clone()).unwrap();
         assert!(state.read(&right).is_ok());
         assert!(state.read(&Place::new("pair")).is_err());
+    }
+
+    #[test]
+    fn reinitializing_one_field_does_not_restore_other_fields_of_a_moved_aggregate() {
+        let mut state = OwnershipState::new();
+        let aggregate = Place::new("pair");
+        let left = aggregate.clone().field("left");
+        let right = aggregate.clone().field("right");
+
+        state.move_out(aggregate.clone()).unwrap();
+        state.assign(left.clone()).unwrap();
+
+        assert!(state.read(&left).is_ok());
+        assert!(state.read(&right).is_err());
+        assert!(state.read(&aggregate).is_err());
+        assert!(state.is_moved(&right));
+        assert!(!state.is_moved(&left));
     }
 
     #[test]
