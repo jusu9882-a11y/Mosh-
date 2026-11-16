@@ -365,6 +365,7 @@ impl Checker {
                 // Iterable/collection types are deliberately outside this first
                 // primitive-type milestone. Name resolution still validates it.
                 let _ = self.expression(iterable);
+                let before = self.scopes.clone();
                 self.push_scope();
                 self.define(
                     name,
@@ -379,6 +380,9 @@ impl Checker {
                     self.statement(child);
                 }
                 self.pop_scope();
+                // A for-loop can have zero iterations; do not carry body-only
+                // initialization facts beyond the loop.
+                self.scopes = before;
             }
             Stmt::Assign {
                 target,
