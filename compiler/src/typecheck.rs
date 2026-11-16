@@ -746,13 +746,12 @@ mod tests {
 
     #[test]
     fn rejects_nested_functions_until_lowering_is_implemented() {
-        let errors = checked(
-            "function main():\n    function helper():\n        print(\"nested\")\n",
-        )
-        .unwrap_err();
-        assert!(errors
-            .iter()
-            .any(|error| error.message.contains("nested function declarations are not supported")));
+        let errors =
+            checked("function main():\n    function helper():\n        print(\"nested\")\n")
+                .unwrap_err();
+        assert!(errors.iter().any(|error| error
+            .message
+            .contains("nested function declarations are not supported")));
     }
 
     #[test]
