@@ -1,0 +1,15 @@
+function sum_to(limit: Int) -> Int:
+    mut total: Int = 0
+    mut current: Int = 1
+    while current <= limit:
+        total = total + current
+        current = current + 1
+    return total
+
+function main() -> Int:
+    let result = sum_to(5)
+    if result == 15:
+        print("sum=15")
+    else:
+        print("unexpected")
+    return 0
