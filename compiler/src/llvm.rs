@@ -534,56 +534,67 @@ impl<'a> FunctionEmitter<'a> {
                     Err(errors) => self.errors.extend(errors),
                 }
             }
-            InstructionKind::Call { name, arguments } if name == "print" => {
-                if arguments.len() != 1 {
-                    self.errors
-                        .push(error("print currently requires exactly one argument"));
-                    return;
-                }
-                let argument = arguments[0];
-                let Some(ty) = self.value_types.get(&argument).copied() else {
-                    self.errors
-                        .push(error("cannot determine print argument type"));
-                    return;
-                };
-                match self.value(argument) {
-                    Ok(value) => {
-                        match ty {
-                            MirType::String => {
-                                let format = string_constant("%s\n", self.strings);
-                                let _ = writeln!(
-                                    self.output,
-                                    "  call i32 (ptr, ...) @printf(ptr {format}, ptr {value})"
-                                );
-                            }
-                            MirType::Int => {
-                                let format = string_constant("%lld\n", self.strings);
-                                let _ = writeln!(
-                                    self.output,
-                                    "  call i32 (ptr, ...) @printf(ptr {format}, i64 {value})"
-                                );
-                            }
-                            MirType::Float => {
-                                let format = string_constant("%g\n", self.strings);
-                                let _ = writeln!(
-                                    self.output,
-                                    "  call i32 (ptr, ...) @printf(ptr {format}, double {value})"
-                                );
-                            }
-                            MirType::Bool => {
-                                let format = string_constant("%d\n", self.strings);
-                                let _ = writeln!(
-                                    self.output,
-                                    "  %print.bool.{} = zext i1 {value} to i32",
-                                    argument.0
-                                );
-                                let _ = writeln!(self.output, "  call i32 (ptr, ...) @printf(ptr {format}, i32 %print.bool.{})", argument.0);
-                            }
-                            MirType::Unit => self.errors.push(error("cannot print a Unit value")),
+            InstructionKind::Call { name: _, arguments } if name == "print" => {
+                let mut format_text = String::new();
+                let mut rendered_arguments = Vec::new();
+                for argument in arguments {
+                    let Some(ty) = self.value_types.get(argument).copied() else {
+                        self.errors.push(error("cannot determine print argument type"));
+                        return;
+                    };
+                    let value = match self.value(*argument) {
+                        Ok(value) => value,
+                        Err(errors) => {
+                            self.errors.extend(errors);
+                            return;
+                        }
+                    };
+                    if !format_text.is_empty() {
+                        format_text.push(' ');
+                    }
+                    match ty {
+                        MirType::String => {
+                            format_text.push_str("%s");
+                            rendered_arguments.push(format!("ptr {value}"));
+                        }
+                        MirType::Int => {
+                            format_text.push_str("%lld");
+                            rendered_arguments.push(format!("i64 {value}"));
+                        }
+                        MirType::Float => {
+                            format_text.push_str("%g");
+                            rendered_arguments.push(format!("double {value}"));
+                        }
+                        MirType::Bool => {
+                            format_text.push_str("%d");
+                            let call_id = instruction.result.map_or(0, |id| id.0);
+                            let _ = writeln!(
+                                self.output,
+                                "  %print.bool.{call_id}.{} = zext i1 {value} to i32",
+                                argument.0
+                            );
+                            rendered_arguments.push(format!(
+                                "i32 %print.bool.{call_id}.{}",
+                                argument.0
+                            ));
+                        }
+                        MirType::Unit => {
+                            self.errors.push(error("cannot print a Unit value"));
+                            return;
                         }
                     }
-                    Err(errors) => self.errors.extend(errors),
                 }
+                format_text.push('\n');
+                let format = string_constant(&format_text, self.strings);
+                let arguments = if rendered_arguments.is_empty() {
+                    String::new()
+                } else {
+                    format!(", {}", rendered_arguments.join(", "))
+                };
+                let _ = writeln!(
+                    self.output,
+                    "  call i32 (ptr, ...) @printf(ptr {format}{arguments})"
+                );
             }
             InstructionKind::Call { name, arguments } => {
                 let Some((parameter_types, result_type)) = self.signatures.get(name) else {
@@ -858,6 +869,17 @@ mod tests {
         assert!(ir.contains("define i64 @mosh_add(i64 %arg0, i64 %arg1)"));
         assert!(ir.contains("call i64 @mosh_add(i64 20, i64 22)"));
         assert!(ir.contains("@printf"));
+    }
+
+    #[test]
+    fn print_accepts_multiple_primitive_arguments() {
+        let ir = compile(
+            "function main() -> Unit:\n    print(\"value\", 42, true, 3.5)\n",
+        )
+        .unwrap();
+        assert!(ir.contains("%s %lld %d %g"));
+        assert!(ir.contains("i64 42"));
+        assert!(ir.contains("double 3.50000000000000000e0"));
     }
 
     #[test]
