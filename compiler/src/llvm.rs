@@ -397,7 +397,11 @@ impl<'a> FunctionEmitter<'a> {
                                 "  %str.cmp.{} = call i32 @strcmp(ptr {}, ptr {})",
                                 id.0, left, right
                             );
-                            let predicate = if *operator == TokenKind::Equal { "eq" } else { "ne" };
+                            let predicate = if *operator == TokenKind::Equal {
+                                "eq"
+                            } else {
+                                "ne"
+                            };
                             let _ = writeln!(
                                 self.output,
                                 "  %v{} = icmp {} i32 %str.cmp.{}, 0",
@@ -782,11 +786,20 @@ pub fn generate(module: &MirModule) -> Result<String> {
     if !matches!(main.return_type, MirType::Int | MirType::Unit) {
         return Err(vec![error("main must return Int or Unit")]);
     }
-    if module.functions.iter().filter(|function| function.name == "__mosh_init").count() > 1 {
-        return Err(vec![error("the function name '__mosh_init' is reserved for module initialization")]);
+    if module
+        .functions
+        .iter()
+        .filter(|function| function.name == "__mosh_init")
+        .count()
+        > 1
+    {
+        return Err(vec![error(
+            "the function name '__mosh_init' is reserved for module initialization",
+        )]);
     }
 
-    let mut output = String::from("declare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\n\n");
+    let mut output =
+        String::from("declare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\n\n");
     for (value, index) in &strings {
         let _ = writeln!(
             output,
