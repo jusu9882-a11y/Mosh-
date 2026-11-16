@@ -1204,7 +1204,7 @@ mod tests {
         use std::process::Command;
 
         let ir = compile(
-            "function main() -> Int:\n    let value = 1\n    if true:\n        let value = 2\n        print(value)\n    print(value)\n    return 0\n",
+            "function main() -> Int:\n    let value = 1\n    if true:\n        let value = \"inner\"\n        print(value)\n    print(value)\n    return 0\n",
         )
         .unwrap();
         let base = std::env::temp_dir().join(format!("mosh-shadow-smoke-{}", std::process::id()));
@@ -1231,7 +1231,7 @@ mod tests {
         let _ = std::fs::remove_file(&ir_path);
         let _ = std::fs::remove_file(&executable);
         assert!(executed.status.success());
-        assert_eq!(String::from_utf8_lossy(&executed.stdout), "2\n1\n");
+        assert_eq!(String::from_utf8_lossy(&executed.stdout), "inner\n1\n");
     }
 
     #[test]
