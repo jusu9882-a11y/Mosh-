@@ -323,11 +323,17 @@ impl Checker {
                     self.block(body);
                 }
                 let after_else = self.scopes.clone();
+                let then_returns = block_guarantees_return(then_body);
+                let else_returns = else_body.is_some_and(|body| block_guarantees_return(body));
                 for (scope_index, scope) in self.scopes.iter_mut().enumerate() {
                     for (name, variable) in &mut scope.variables {
                         let then_initialized = after_then
                             .get(scope_index)
                             .and_then(|scope| scope.variables.get(name))
+                            .is_some_and(|state| state.initialized);
+                        let before_initialized = before[scope_index]
+                            .variables
+                            .get(name)
                             .is_some_and(|state| state.initialized);
                         let else_initialized = if else_body.is_some() {
                             after_else
@@ -335,12 +341,17 @@ impl Checker {
                                 .and_then(|scope| scope.variables.get(name))
                                 .is_some_and(|state| state.initialized)
                         } else {
-                            before[scope_index]
-                                .variables
-                                .get(name)
-                                .is_some_and(|state| state.initialized)
+                            before_initialized
                         };
-                        variable.initialized = then_initialized && else_initialized;
+
+                        // A branch that always returns cannot reach the join.
+                        // Only merge states from branches that can continue.
+                        variable.initialized = match (then_returns, else_returns, else_body.is_some()) {
+                            (true, false, true) => else_initialized,
+                            (false, true, true) => then_initialized,
+                            (true, true, true) => then_initialized || else_initialized,
+                            _ => then_initialized && else_initialized,
+                        };
                     }
                 }
             }
@@ -728,6 +739,15 @@ mod tests {
             .any(|error| error.message.contains("before it is initialized")));
         let both_branches = "function main(flag: Bool) -> Int:\n    mut value: Int\n    if flag:\n        value = 1\n    else:\n        value = 2\n    return value\n";
         assert!(checked(both_branches).is_ok());
+    }
+
+    #[test]
+    fn ignores_initialization_state_from_a_branch_that_returns() {
+        let then_returns = "function choose(flag: Bool) -> Int:\n    mut value: Int\n    if flag:\n        return 0\n    else:\n        value = 7\n    return value\n";
+        assert!(checked(then_returns).is_ok());
+
+        let else_returns = "function choose(flag: Bool) -> Int:\n    mut value: Int\n    if flag:\n        value = 7\n    else:\n        return 0\n    return value\n";
+        assert!(checked(else_returns).is_ok());
     }
 
     #[test]
