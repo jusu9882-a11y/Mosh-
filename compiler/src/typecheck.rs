@@ -209,14 +209,16 @@ impl Checker {
     }
 
     fn resolve_type(&mut self, syntax: &TypeExpr) -> Option<Type> {
-        Type::from_name(&syntax.name).or_else(|| {
-            self.structures
-                .get(&syntax.name)
-                .map(|definition| Type::Struct(definition.id))
-        }).or_else(|| {
-            self.error(format!("unknown type '{}'", syntax.name), syntax.span);
-            None
-        })
+        Type::from_name(&syntax.name)
+            .or_else(|| {
+                self.structures
+                    .get(&syntax.name)
+                    .map(|definition| Type::Struct(definition.id))
+            })
+            .or_else(|| {
+                self.error(format!("unknown type '{}'", syntax.name), syntax.span);
+                None
+            })
     }
 
     fn resolve_parameter_type(&mut self, syntax: &TypeExpr) -> Option<Type> {
@@ -602,11 +604,18 @@ impl Checker {
                 for (field_name, value, field_span) in fields {
                     let actual = self.expression(value);
                     if provided.iter().any(|seen: &String| seen == field_name) {
-                        self.error(format!("field '{field_name}' is specified more than once"), *field_span);
+                        self.error(
+                            format!("field '{field_name}' is specified more than once"),
+                            *field_span,
+                        );
                         continue;
                     }
                     provided.push(field_name.clone());
-                    match definition.fields.iter().find(|(name, _)| name == field_name) {
+                    match definition
+                        .fields
+                        .iter()
+                        .find(|(name, _)| name == field_name)
+                    {
                         Some((_, expected)) => self.expect_type(
                             actual,
                             *expected,
@@ -757,36 +766,31 @@ impl Checker {
                     Type::Unknown
                 }
             }
-            Expr::Member { object, name, span } => {
-                match self.expression(object) {
-                    Type::Struct(id) => self
-                        .structures
-                        .values()
-                        .find(|definition| definition.id == id)
-                        .and_then(|definition| {
-                            definition
-                                .fields
-                                .iter()
-                                .find(|(field_name, _)| field_name == name)
-                                .map(|(_, ty)| *ty)
-                        })
-                        .unwrap_or_else(|| {
-                            self.error(
-                                format!("structure has no field '{name}'"),
-                                *span,
-                            );
-                            Type::Unknown
-                        }),
-                    Type::Unknown => Type::Unknown,
-                    other => {
-                        self.error(
-                            format!("member access requires a structure, found {other}"),
-                            *span,
-                        );
+            Expr::Member { object, name, span } => match self.expression(object) {
+                Type::Struct(id) => self
+                    .structures
+                    .values()
+                    .find(|definition| definition.id == id)
+                    .and_then(|definition| {
+                        definition
+                            .fields
+                            .iter()
+                            .find(|(field_name, _)| field_name == name)
+                            .map(|(_, ty)| *ty)
+                    })
+                    .unwrap_or_else(|| {
+                        self.error(format!("structure has no field '{name}'"), *span);
                         Type::Unknown
-                    }
+                    }),
+                Type::Unknown => Type::Unknown,
+                other => {
+                    self.error(
+                        format!("member access requires a structure, found {other}"),
+                        *span,
+                    );
+                    Type::Unknown
                 }
-            }
+            },
             Expr::Index {
                 object,
                 index,
