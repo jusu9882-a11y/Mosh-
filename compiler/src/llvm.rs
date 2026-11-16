@@ -296,7 +296,7 @@ impl<'a> FunctionEmitter<'a> {
 
     fn emit_instruction(&mut self, instruction: &Instruction) {
         match &instruction.kind {
-            InstructionKind::Integer(text) => match text.parse::<i64>() {
+            InstructionKind::Integer(text) => match text.replace('_', "").parse::<i64>() {
                 Ok(value) => {
                     if let Some(id) = instruction.result {
                         self.values.insert(id, value.to_string());
@@ -306,7 +306,7 @@ impl<'a> FunctionEmitter<'a> {
                     "integer literal '{text}' is outside the supported Int range"
                 ))),
             },
-            InstructionKind::Float(text) => match text.parse::<f64>() {
+            InstructionKind::Float(text) => match text.replace('_', "").parse::<f64>() {
                 Ok(value) if value.is_finite() => {
                     if let Some(id) = instruction.result {
                         self.values.insert(id, format!("{value:.17e}"));
@@ -323,6 +323,10 @@ impl<'a> FunctionEmitter<'a> {
                 }
             }
             InstructionKind::String(value) => {
+                if value.contains('\\0') {
+                    self.errors.push(error("string literals containing NUL bytes are not supported by the native backend"));
+                    return;
+                }
                 let operand = string_constant(value, self.strings);
                 if let Some(id) = instruction.result {
                     self.values.insert(id, operand);
@@ -907,7 +911,7 @@ mod tests {
         )
         .unwrap();
         assert!(ir.contains("br i1 true, label %bb"));
-        assert!(ir.contains("ret i32 1"));
+        assert!(ir.contains("ret i64 1"));
     }
 
     #[test]
