@@ -393,27 +393,6 @@ impl<'a> FunctionEmitter<'a> {
                 };
                 match self.value(*operand) {
                     Ok(value) => {
-                        if left_type == Some(MirType::String)
-                            && matches!(operator, TokenKind::Equal | TokenKind::NotEqual)
-                        {
-                            let _ = writeln!(
-                                self.output,
-                                "  %str.cmp.{} = call i32 @strcmp(ptr {}, ptr {})",
-                                id.0, left, right
-                            );
-                            let predicate = if *operator == TokenKind::Equal {
-                                "eq"
-                            } else {
-                                "ne"
-                            };
-                            let _ = writeln!(
-                                self.output,
-                                "  %v{} = icmp {} i32 %str.cmp.{}, 0",
-                                id.0, predicate, id.0
-                            );
-                            self.values.insert(id, format!("%v{}", id.0));
-                            return;
-                        }
                         let op = match (operator, ty) {
                             (TokenKind::Minus, MirType::Int) => format!("sub i64 0, {value}"),
                             (TokenKind::Minus, MirType::Float) => format!("fneg double {value}"),
