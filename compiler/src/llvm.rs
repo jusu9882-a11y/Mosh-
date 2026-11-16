@@ -323,7 +323,7 @@ impl<'a> FunctionEmitter<'a> {
                 }
             }
             InstructionKind::String(value) => {
-                if value.contains('\\0') {
+                if value.contains('\0') {
                     self.errors.push(error("string literals containing NUL bytes are not supported by the native backend"));
                     return;
                 }
