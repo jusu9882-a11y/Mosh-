@@ -138,6 +138,7 @@ pub struct ParseOutput {
     pub errors: Vec<ParseError>,
 }
 
+#[cfg(test)]
 pub fn parse(tokens: &[Token]) -> Result<Program, ParseError> {
     let output = parse_recovering(tokens)?;
     match output.errors.into_iter().next() {
