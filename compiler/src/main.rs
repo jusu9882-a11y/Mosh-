@@ -350,6 +350,37 @@ fn main() -> ExitCode {
 mod tests {
     use super::run_build;
 
+    fn assert_build_rejects(name: &str, source_text: &str) {
+        let base = std::env::temp_dir().join(format!("moshc-cli-{name}-{}", std::process::id()));
+        let source = base.with_extension("mosh");
+        std::fs::write(&source, source_text).unwrap();
+
+        let status = run_build(source.to_str().unwrap(), None);
+        let _ = std::fs::remove_file(&source);
+        assert_eq!(status, std::process::ExitCode::from(1));
+    }
+
+    #[test]
+    fn build_rejects_module_level_global_bindings() {
+        assert_build_rejects("global", "let value: Int = 42\n");
+    }
+
+    #[test]
+    fn build_rejects_nested_function_declarations() {
+        assert_build_rejects(
+            "nested",
+            "function main():\n    function helper():\n        print(\"nested\")\n",
+        );
+    }
+
+    #[test]
+    fn build_rejects_for_loops_until_iteration_is_implemented() {
+        assert_build_rejects(
+            "for",
+            "function main():\n    for item in 1:\n        print(item)\n",
+        );
+    }
+
     #[test]
     fn build_command_creates_a_runnable_native_executable() {
         let base = std::env::temp_dir().join(format!("moshc-cli-smoke-{}", std::process::id()));

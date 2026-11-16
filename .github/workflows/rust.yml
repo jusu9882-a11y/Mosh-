@@ -32,6 +32,8 @@ jobs:
         run: cargo test --all-targets
       - name: Check compilation
         run: cargo check --all-targets
+      - name: Run Clippy with warnings denied
+        run: cargo clippy --all-targets -- -D warnings
       - name: Build and run the Mosh hello-world example
         run: |
           cargo build --release
@@ -43,6 +45,16 @@ jobs:
           ./target/release/moshc build ../examples/control_flow.mosh -o target/control-flow
           output="$(./target/control-flow)"
           test "$output" = "sum=15"
+      - name: Build and run the Mosh recursive Fibonacci example
+        run: |
+          ./target/release/moshc build ../examples/fibonacci.mosh -o target/fibonacci
+          output="$(./target/fibonacci)"
+          test "$output" = "55"
+      - name: Build and run the Mosh primitive-values example
+        run: |
+          ./target/release/moshc build ../examples/primitive_values.mosh -o target/primitive-values
+          output="$(./target/primitive-values)"
+          test "$output" = "Mosh 3.5 3"
       - name: Upload Linux compiler preview
         uses: actions/upload-artifact@v4
         with:
@@ -50,6 +62,7 @@ jobs:
           path: |
             compiler/target/release/moshc
             README.md
+            TESTING.md
             docs/SPECIFICATION.md
             examples/*.mosh
           if-no-files-found: error

@@ -26,7 +26,7 @@ The repository now contains a working compiler pipeline for an initial primitive
 6. Textual LLVM IR generation and native executable linking through Clang.
 7. End-to-end tests that build and execute generated native programs.
 
-The current native backend supports the primitive types `Int`, `Float`, `Bool`, `String`, and `Unit` in the supported contexts; named and recursive function calls; arithmetic and comparisons; bitwise integer operations; block-scoped local variables (including shadowed names) and assignments; conditional and while-loop control flow; and the built-in `print`.
+The current native backend supports `Int`, `Float`, `Bool`, and `String` values, with `Unit` currently limited to function return types; named and recursive function calls; arithmetic and comparisons; bitwise integer operations; block-scoped local variables (including shadowed names) and assignments; conditional and while-loop control flow; and the built-in `print`.
 
 The backend currently maps `Int` to signed 64-bit integers and `Float` to LLVM `double`. Integer division and remainder trap on a zero divisor; signed division also traps on the minimum-integer divided by negative one case. These are implementation choices for the first backend, not yet a final language-wide representation contract.
 
@@ -49,9 +49,10 @@ The `build` command runs parsing, semantic analysis, type checking, MIR lowering
 
 This is not yet the complete Mosh language or a complete systems compiler. In particular:
 
-- `for`-loop lowering and iterable/collection types are not implemented.
-- Nested functions, member access, indexing, structures, enumerations, arrays, and generics are not implemented in the initial compiler pipeline.
-- Module-global variable storage is not implemented.
+- `for`-loop lowering and iterable/collection types are not implemented; the type checker rejects `for` loops.
+- Nested functions, member access, indexing, structures, enumerations, arrays, and generics are not implemented in the initial compiler pipeline; unsupported nested functions are rejected.
+- Module-global variable storage and executable module-level statements are not implemented; these are rejected during type checking.
+- `Unit` is currently return-only: it cannot be used as a parameter or local binding, passed to `print`, or returned as an explicit expression.
 - Ownership and borrow checking are not implemented.
 - Raw pointers, manual allocation, custom allocators, explicit layouts, atomics, volatile operations, C interoperability, and inline assembly are not implemented.
 - A complete Mosh runtime and standard library do not exist yet.
