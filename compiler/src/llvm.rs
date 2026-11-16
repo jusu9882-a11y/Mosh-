@@ -523,6 +523,47 @@ impl<'a> FunctionEmitter<'a> {
         })
     }
 
+    fn emit_integer_division_guard(
+        &mut self,
+        value_id: ValueId,
+        left: &str,
+        right: &str,
+        check_overflow: bool,
+    ) {
+        let id = value_id.0;
+        let _ = writeln!(self.output, "  %div.zero.{id} = icmp eq i64 {right}, 0");
+        if check_overflow {
+            let _ = writeln!(
+                self.output,
+                "  %div.min.{id} = icmp eq i64 {left}, -9223372036854775808"
+            );
+            let _ = writeln!(
+                self.output,
+                "  %div.negone.{id} = icmp eq i64 {right}, -1"
+            );
+            let _ = writeln!(
+                self.output,
+                "  %div.overflow.{id} = and i1 %div.min.{id}, %div.negone.{id}"
+            );
+            let _ = writeln!(
+                self.output,
+                "  %div.invalid.{id} = or i1 %div.zero.{id}, %div.overflow.{id}"
+            );
+        } else {
+            let _ = writeln!(
+                self.output,
+                "  %div.invalid.{id} = or i1 %div.zero.{id}, false"
+            );
+        }
+        let _ = writeln!(
+            self.output,
+            "  br i1 %div.invalid.{id}, label %div.trap.{id}, label %div.cont.{id}"
+        );
+        let _ = writeln!(self.output, "div.trap.{id}:");
+        self.output.push_str("  call void @llvm.trap()\n  unreachable\n");
+        let _ = writeln!(self.output, "div.cont.{id}:");
+    }
+
     fn emit_instruction(
         &mut self,
         instruction: &Instruction,
@@ -690,6 +731,16 @@ impl<'a> FunctionEmitter<'a> {
                     .and_then(|left| self.value(*right).map(|right| (left, right)));
                 match operands {
                     Ok((left, right)) => {
+                        if ty == MirType::Int
+                            && matches!(operator, TokenKind::Slash | TokenKind::Percent)
+                        {
+                            self.emit_integer_division_guard(
+                                id,
+                                &left,
+                                &right,
+                                *operator == TokenKind::Slash,
+                            );
+                        }
                         if left_type == Some(MirType::String)
                             && matches!(operator, TokenKind::Equal | TokenKind::NotEqual)
                         {
@@ -1042,8 +1093,9 @@ pub fn generate(module: &MirModule) -> Result<String> {
         )]);
     }
 
-    let mut output =
-        String::from("declare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\n\n");
+    let mut output = String::from(
+        "declare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare void @llvm.trap()\n\n",
+    );
     for (value, index) in &strings {
         let _ = writeln!(
             output,
@@ -1303,6 +1355,70 @@ mod tests {
         let _ = std::fs::remove_file(&executable);
         assert!(executed.status.success());
         assert_eq!(String::from_utf8_lossy(&executed.stdout), "3\n");
+    }
+
+    #[test]
+    fn native_executable_traps_on_integer_division_by_zero() {
+        use std::process::Command;
+
+        let ir = compile(
+            "function main() -> Int:\n    return 1 / 0\n",
+        )
+        .unwrap();
+        let base = std::env::temp_dir().join(format!("mosh-divzero-smoke-{}", std::process::id()));
+        let ir_path = base.with_extension("ll");
+        let executable = base.with_extension("bin");
+        std::fs::write(&ir_path, ir).unwrap();
+        let compiled = Command::new("clang")
+            .arg("-x")
+            .arg("ir")
+            .arg("-O0")
+            .arg(&ir_path)
+            .arg("-o")
+            .arg(&executable)
+            .output()
+            .expect("clang must be installed for the native backend test");
+        assert!(
+            compiled.status.success(),
+            "clang rejected guarded division IR: {}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executed = Command::new(&executable).output().unwrap();
+        let _ = std::fs::remove_file(&ir_path);
+        let _ = std::fs::remove_file(&executable);
+        assert!(!executed.status.success());
+    }
+
+    #[test]
+    fn native_executable_traps_on_signed_division_overflow() {
+        use std::process::Command;
+
+        let ir = compile(
+            "function main() -> Int:\n    return (-9223372036854775807 - 1) / -1\n",
+        )
+        .unwrap();
+        let base = std::env::temp_dir().join(format!("mosh-divoverflow-smoke-{}", std::process::id()));
+        let ir_path = base.with_extension("ll");
+        let executable = base.with_extension("bin");
+        std::fs::write(&ir_path, ir).unwrap();
+        let compiled = Command::new("clang")
+            .arg("-x")
+            .arg("ir")
+            .arg("-O0")
+            .arg(&ir_path)
+            .arg("-o")
+            .arg(&executable)
+            .output()
+            .expect("clang must be installed for the native backend test");
+        assert!(
+            compiled.status.success(),
+            "clang rejected guarded overflow IR: {}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executed = Command::new(&executable).output().unwrap();
+        let _ = std::fs::remove_file(&ir_path);
+        let _ = std::fs::remove_file(&executable);
+        assert!(!executed.status.success());
     }
 
     #[test]
