@@ -132,7 +132,7 @@ impl std::error::Error for OwnershipError {}
 /// Per-function ownership state. Borrow IDs are monotonically allocated and
 /// released when the frontend reaches the end of the corresponding lexical
 /// borrow region.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct OwnershipState {
     moved: HashSet<Place>,
     reinitialized: HashSet<Place>,
@@ -143,6 +143,49 @@ pub struct OwnershipState {
 impl OwnershipState {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Conservatively merge ownership states at a control-flow join.
+    ///
+    /// A place is considered moved if any incoming path leaves it moved.
+    /// A reinitialized projection is considered live only if every incoming
+    /// path agrees that it was reinitialized.
+    pub fn join(states: &[&Self]) -> Self {
+        let Some(first) = states.first() else {
+            return Self::default();
+        };
+
+        let mut joined = Self::default();
+        for state in states {
+            joined.moved.extend(state.moved.iter().cloned());
+        }
+
+        joined.reinitialized = first.reinitialized.clone();
+        for state in states.iter().skip(1) {
+            joined
+                .reinitialized
+                .retain(|place| state.reinitialized.contains(place));
+        }
+
+        joined.next_borrow = states
+            .iter()
+            .map(|state| state.next_borrow)
+            .max()
+            .unwrap_or(0);
+        for state in states {
+            for active in state.borrows.values() {
+                if !joined.borrows.values().any(|existing| existing == active) {
+                    let id = joined.next_borrow;
+                    joined.next_borrow = joined
+                        .next_borrow
+                        .checked_add(1)
+                        .expect("borrow ID space exhausted");
+                    joined.borrows.insert(id, active.clone());
+                }
+            }
+        }
+
+        joined
     }
 
     fn ensure_live(&self, place: &Place) -> Result<(), OwnershipError> {
@@ -296,6 +339,36 @@ mod tests {
         assert!(state.read(&aggregate).is_err());
         assert!(state.is_moved(&right));
         assert!(!state.is_moved(&left));
+    }
+
+    #[test]
+    fn control_flow_join_rejects_values_moved_on_any_incoming_path() {
+        let value = Place::new("value");
+        let mut moved_path = OwnershipState::new();
+        moved_path.move_out(value.clone()).unwrap();
+        let live_path = OwnershipState::new();
+
+        let joined = OwnershipState::join(&[&moved_path, &live_path]);
+        assert!(joined.read(&value).is_err());
+    }
+
+    #[test]
+    fn control_flow_join_keeps_only_reinitializations_shared_by_all_paths() {
+        let aggregate = Place::new("pair");
+        let left = aggregate.clone().field("left");
+        let right = aggregate.clone().field("right");
+
+        let mut first = OwnershipState::new();
+        first.move_out(aggregate.clone()).unwrap();
+        first.assign(left.clone()).unwrap();
+
+        let mut second = OwnershipState::new();
+        second.move_out(aggregate).unwrap();
+        second.assign(left.clone()).unwrap();
+
+        let joined = OwnershipState::join(&[&first, &second]);
+        assert!(joined.read(&left).is_ok());
+        assert!(joined.read(&right).is_err());
     }
 
     #[test]
