@@ -364,7 +364,7 @@ mod tests {
         let source_path = source.to_str().unwrap();
         let executable_path = executable.to_str().unwrap();
         let status = run_build(source_path, Some(executable_path));
-        assert!(status.success());
+        assert_eq!(status, std::process::ExitCode::SUCCESS);
 
         let result = std::process::Command::new(&executable).output().unwrap();
         let _ = std::fs::remove_file(&source);
