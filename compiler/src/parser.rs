@@ -275,7 +275,10 @@ impl<'a> Parser<'a> {
         let start = self.expect(TokenKind::Struct, "expected 'struct'")?.span;
         let name = self.identifier("expected structure name")?;
         self.expect(TokenKind::Colon, "expected ':' after structure name")?;
-        self.expect(TokenKind::Newline, "expected newline after structure header")?;
+        self.expect(
+            TokenKind::Newline,
+            "expected newline after structure header",
+        )?;
         self.skip_newlines();
         self.expect(TokenKind::Indent, "expected an indented structure body")?;
 
@@ -297,7 +300,9 @@ impl<'a> Parser<'a> {
             }
             self.skip_newlines();
         }
-        let end = self.expect(TokenKind::Dedent, "expected end of structure body")?.span;
+        let end = self
+            .expect(TokenKind::Dedent, "expected end of structure body")?
+            .span;
         Ok(Stmt::Struct {
             name,
             fields,
@@ -579,8 +584,12 @@ impl<'a> Parser<'a> {
                     if !self.check(&TokenKind::RightBrace) {
                         loop {
                             let field_start = self.peek().span;
-                            let field_name = self.identifier("expected field name in structure literal")?;
-                            self.expect(TokenKind::Colon, "expected ':' after structure literal field")?;
+                            let field_name =
+                                self.identifier("expected field name in structure literal")?;
+                            self.expect(
+                                TokenKind::Colon,
+                                "expected ':' after structure literal field",
+                            )?;
                             let value = self.expression(0)?;
                             let field_span = join(field_start, expr_span(&value));
                             fields.push((field_name, value, field_span));
@@ -592,7 +601,12 @@ impl<'a> Parser<'a> {
                             }
                         }
                     }
-                    let close = self.expect(TokenKind::RightBrace, "expected '}' after structure literal")?.span;
+                    let close = self
+                        .expect(
+                            TokenKind::RightBrace,
+                            "expected '}' after structure literal",
+                        )?
+                        .span;
                     Ok(Expr::StructLiteral {
                         name: token.lexeme,
                         fields,
@@ -604,7 +618,7 @@ impl<'a> Parser<'a> {
                         span: token.span,
                     })
                 }
-            },
+            }
             TokenKind::Integer => Ok(Expr::Integer {
                 value: token.lexeme,
                 span: token.span,
