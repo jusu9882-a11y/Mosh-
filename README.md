@@ -28,7 +28,7 @@ The repository now contains a working compiler pipeline for an initial primitive
 
 The current native backend supports the primitive types `Int`, `Float`, `Bool`, `String`, and `Unit` in the supported contexts; named and recursive function calls; arithmetic and comparisons; bitwise integer operations; block-scoped local variables (including shadowed names) and assignments; conditional and while-loop control flow; and the built-in `print`.
 
-The backend currently maps `Int` to signed 64-bit integers and `Float` to LLVM `double`. These are implementation choices for the first backend, not yet a final language-wide representation contract.
+The backend currently maps `Int` to signed 64-bit integers and `Float` to LLVM `double`. Integer division and remainder trap on a zero divisor; signed division also traps on the minimum-integer divided by negative one case. These are implementation choices for the first backend, not yet a final language-wide representation contract.
 
 ## Build the compiler
 
