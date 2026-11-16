@@ -9,6 +9,8 @@ use std::alloc::{alloc_zeroed, dealloc, Layout};
 use std::fmt;
 use std::ptr::NonNull;
 
+use crate::layout::{compute_layout, LayoutError, LayoutType, TargetDataLayout};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AllocationError {
     InvalidLayout { size: usize, align: usize },
@@ -31,6 +33,23 @@ impl fmt::Display for AllocationError {
 
 impl std::error::Error for AllocationError {}
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuntimeTypeAllocationError {
+    Layout(LayoutError),
+    Allocation(AllocationError),
+}
+
+impl fmt::Display for RuntimeTypeAllocationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Layout(error) => write!(f, "cannot lay out runtime type: {error}"),
+            Self::Allocation(error) => write!(f, "cannot allocate runtime type: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for RuntimeTypeAllocationError {}
+
 /// An owned, zero-initialized allocation with a fixed size and alignment.
 ///
 /// Zero-sized allocations use a non-null dangling pointer and are never
@@ -52,13 +71,22 @@ impl fmt::Debug for Allocation {
 }
 
 impl Allocation {
+    /// Allocates storage using the compiler's target-aware layout for a type.
+    pub fn for_type(
+        ty: &LayoutType,
+        target: TargetDataLayout,
+    ) -> Result<Self, RuntimeTypeAllocationError> {
+        let layout = compute_layout(ty, target).map_err(RuntimeTypeAllocationError::Layout)?;
+        Self::zeroed(layout.size, layout.align).map_err(RuntimeTypeAllocationError::Allocation)
+    }
+
     pub fn zeroed(size: usize, align: usize) -> Result<Self, AllocationError> {
         let layout = Layout::from_size_align(size, align)
             .map_err(|_| AllocationError::InvalidLayout { size, align })?;
 
         if size == 0 {
             return Ok(Self {
-                pointer: NonNull::dangling(),
+                pointer: NonNull::new(align as *mut u8).expect("validated alignment is nonzero"),
                 layout,
                 allocated: false,
             });
@@ -119,6 +147,10 @@ impl Allocation {
     /// Exposes the raw mutable address. Dereferencing it, creating references
     /// from it, and pointer arithmetic require the caller to uphold Rust's
     /// pointer validity, aliasing, initialization, and lifetime rules.
+    ///
+    /// # Safety
+    /// The caller must not use the pointer after this allocation is dropped,
+    /// must preserve alignment and bounds, and must obey aliasing rules.
     pub unsafe fn as_mut_ptr(&mut self) -> *mut u8 {
         self.pointer.as_ptr()
     }
@@ -141,6 +173,26 @@ impl Drop for Allocation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn allocates_storage_from_compiler_type_layout() {
+        let ty = LayoutType::Struct {
+            name: "Pair".into(),
+            fields: vec![
+                crate::layout::StructField {
+                    name: "flag".into(),
+                    ty: LayoutType::Bool,
+                },
+                crate::layout::StructField {
+                    name: "value".into(),
+                    ty: LayoutType::Int { bits: 64 },
+                },
+            ],
+        };
+        let allocation = Allocation::for_type(&ty, TargetDataLayout::LINUX_X86_64).unwrap();
+        assert_eq!(allocation.size(), 16);
+        assert_eq!(allocation.align(), 8);
+    }
 
     #[test]
     fn creates_zero_initialized_aligned_memory() {
