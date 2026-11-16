@@ -61,7 +61,6 @@ pub fn analyze(program: &Program) -> Result<(), Vec<SemanticError>> {
     // literals and function calls are independent of declaration order.
     for statement in &program.statements {
         match statement {
-            Stmt::Struct { .. } => {}
             Stmt::Function { name, span, .. } => {
                 if !analyzer.define(name, SymbolKind::Function) {
                     analyzer.error(format!("duplicate declaration of '{name}'"), *span);
@@ -131,6 +130,7 @@ impl Analyzer {
 
     fn statement(&mut self, statement: &Stmt) {
         match statement {
+            Stmt::Struct { .. } => {}
             Stmt::Function {
                 name,
                 params,
