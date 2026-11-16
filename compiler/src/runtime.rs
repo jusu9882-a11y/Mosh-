@@ -5,9 +5,10 @@
 //! explicitly unsafe because the caller must uphold pointer validity,
 //! aliasing, initialization, and lifetime rules.
 
-use std::alloc::{alloc_zeroed, dealloc, Layout};
+use std::alloc::{alloc, dealloc, Layout};
 use std::fmt;
 use std::ptr::NonNull;
+use std::sync::Arc;
 
 use crate::layout::{compute_layout, LayoutError, LayoutType, TargetDataLayout};
 
@@ -70,14 +71,48 @@ impl fmt::Display for RuntimeTypeAllocationError {
 
 impl std::error::Error for RuntimeTypeAllocationError {}
 
+
+/// A pluggable allocator for Mosh runtime memory.
+///
+/// # Safety
+/// Implementations must return either null or a unique, valid allocation for
+/// the supplied layout, and must release allocations with the same layout.
+pub unsafe trait MemoryAllocator: Send + Sync {
+    /// # Safety
+    /// The layout must be valid and non-zero-sized. The returned pointer must
+    /// be suitably aligned and valid for the full layout until deallocated.
+    unsafe fn allocate(&self, layout: Layout) -> *mut u8;
+
+    /// # Safety
+    /// The pointer must have been returned by this allocator for this exact
+    /// layout and must not have been deallocated previously.
+    unsafe fn deallocate(&self, pointer: NonNull<u8>, layout: Layout);
+}
+
+#[derive(Debug, Default)]
+pub struct GlobalAllocator;
+
+unsafe impl MemoryAllocator for GlobalAllocator {
+    unsafe fn allocate(&self, layout: Layout) -> *mut u8 {
+        // SAFETY: caller upholds the MemoryAllocator contract.
+        unsafe { alloc(layout) }
+    }
+
+    unsafe fn deallocate(&self, pointer: NonNull<u8>, layout: Layout) {
+        // SAFETY: caller upholds the MemoryAllocator contract.
+        unsafe { dealloc(pointer.as_ptr(), layout) };
+    }
+}
+
 /// An owned, zero-initialized allocation with a fixed size and alignment.
 ///
-/// Zero-sized allocations use a non-null dangling pointer and are never
-/// passed to the global allocator or deallocator.
+/// Zero-sized values reserve one physical byte so their pointer retains the
+/// requested alignment; safe byte operations still expose a logical size of zero.
 pub struct Allocation {
     pointer: NonNull<u8>,
     layout: Layout,
     size: usize,
+    allocator: Arc<dyn MemoryAllocator>,
 }
 
 impl fmt::Debug for Allocation {
@@ -101,21 +136,35 @@ impl Allocation {
     }
 
     pub fn zeroed(size: usize, align: usize) -> Result<Self, AllocationError> {
+        Self::zeroed_with_allocator(size, align, Arc::new(GlobalAllocator))
+    }
+
+    pub fn zeroed_with_allocator(
+        size: usize,
+        align: usize,
+        allocator: Arc<dyn MemoryAllocator>,
+    ) -> Result<Self, AllocationError> {
         // Reserve one physical byte for a logical zero-sized allocation so
         // the returned pointer still satisfies the requested alignment.
         let physical_size = size.max(1);
         let layout = Layout::from_size_align(physical_size, align)
             .map_err(|_| AllocationError::InvalidLayout { size, align })?;
 
-        // SAFETY: layout was validated above and has non-zero size. The
-        // returned allocation is uniquely owned by this value until Drop.
-        let raw = unsafe { alloc_zeroed(layout) };
-        let pointer = NonNull::new(raw).ok_or(AllocationError::OutOfMemory { size, align })?;
+        // SAFETY: layout is valid and non-zero-sized; the allocator contract
+        // guarantees a unique allocation with this exact layout.
+        let raw = unsafe { allocator.allocate(layout) };
+        let pointer =
+            NonNull::new(raw).ok_or(AllocationError::OutOfMemory { size, align })?;
+
+        // SAFETY: raw points to physical_size writable bytes as guaranteed by
+        // the allocator contract.
+        unsafe { std::ptr::write_bytes(pointer.as_ptr(), 0, physical_size) };
 
         Ok(Self {
             pointer,
             layout,
             size,
+            allocator,
         })
     }
 
@@ -201,9 +250,9 @@ impl Allocation {
 
 impl Drop for Allocation {
     fn drop(&mut self) {
-        // SAFETY: pointer came from alloc_zeroed with this exact layout,
-        // is uniquely owned, and Drop runs exactly once.
-        unsafe { dealloc(self.pointer.as_ptr(), self.layout) };
+        // SAFETY: this pointer was returned by this allocator with the
+        // stored layout and has not been released before.
+        unsafe { self.allocator.deallocate(self.pointer, self.layout) };
     }
 }
 
@@ -229,6 +278,45 @@ mod tests {
         let allocation = Allocation::for_type(&ty, TargetDataLayout::LINUX_X86_64).unwrap();
         assert_eq!(allocation.size(), 16);
         assert_eq!(allocation.align(), 8);
+    }
+
+    #[test]
+    fn uses_the_same_custom_allocator_for_allocate_and_deallocate() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct CountingAllocator {
+            allocations: Arc<AtomicUsize>,
+            deallocations: Arc<AtomicUsize>,
+        }
+
+        unsafe impl MemoryAllocator for CountingAllocator {
+            unsafe fn allocate(&self, layout: Layout) -> *mut u8 {
+                self.allocations.fetch_add(1, Ordering::SeqCst);
+                // SAFETY: this delegates the valid layout to the global allocator.
+                unsafe { GlobalAllocator.allocate(layout) }
+            }
+
+            unsafe fn deallocate(&self, pointer: NonNull<u8>, layout: Layout) {
+                self.deallocations.fetch_add(1, Ordering::SeqCst);
+                // SAFETY: pointer/layout are the pair returned by allocate above.
+                unsafe { GlobalAllocator.deallocate(pointer, layout) };
+            }
+        }
+
+        let allocations = Arc::new(AtomicUsize::new(0));
+        let deallocations = Arc::new(AtomicUsize::new(0));
+        let allocator = Arc::new(CountingAllocator {
+            allocations: allocations.clone(),
+            deallocations: deallocations.clone(),
+        });
+
+        {
+            let _memory = Allocation::zeroed_with_allocator(24, 8, allocator).unwrap();
+            assert_eq!(allocations.load(Ordering::SeqCst), 1);
+            assert_eq!(deallocations.load(Ordering::SeqCst), 0);
+        }
+
+        assert_eq!(deallocations.load(Ordering::SeqCst), 1);
     }
 
     #[test]
