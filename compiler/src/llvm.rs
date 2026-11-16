@@ -537,10 +537,7 @@ impl<'a> FunctionEmitter<'a> {
                 self.output,
                 "  %div.min.{id} = icmp eq i64 {left}, -9223372036854775808"
             );
-            let _ = writeln!(
-                self.output,
-                "  %div.negone.{id} = icmp eq i64 {right}, -1"
-            );
+            let _ = writeln!(self.output, "  %div.negone.{id} = icmp eq i64 {right}, -1");
             let _ = writeln!(
                 self.output,
                 "  %div.overflow.{id} = and i1 %div.min.{id}, %div.negone.{id}"
@@ -560,7 +557,8 @@ impl<'a> FunctionEmitter<'a> {
             "  br i1 %div.invalid.{id}, label %div.trap.{id}, label %div.cont.{id}"
         );
         let _ = writeln!(self.output, "div.trap.{id}:");
-        self.output.push_str("  call void @llvm.trap()\n  unreachable\n");
+        self.output
+            .push_str("  call void @llvm.trap()\n  unreachable\n");
         let _ = writeln!(self.output, "div.cont.{id}:");
     }
 
@@ -1361,10 +1359,7 @@ mod tests {
     fn native_executable_traps_on_integer_division_by_zero() {
         use std::process::Command;
 
-        let ir = compile(
-            "function main() -> Int:\n    return 1 / 0\n",
-        )
-        .unwrap();
+        let ir = compile("function main() -> Int:\n    return 1 / 0\n").unwrap();
         let base = std::env::temp_dir().join(format!("mosh-divzero-smoke-{}", std::process::id()));
         let ir_path = base.with_extension("ll");
         let executable = base.with_extension("bin");
@@ -1393,11 +1388,10 @@ mod tests {
     fn native_executable_traps_on_signed_division_overflow() {
         use std::process::Command;
 
-        let ir = compile(
-            "function main() -> Int:\n    return (-9223372036854775807 - 1) / -1\n",
-        )
-        .unwrap();
-        let base = std::env::temp_dir().join(format!("mosh-divoverflow-smoke-{}", std::process::id()));
+        let ir = compile("function main() -> Int:\n    return (-9223372036854775807 - 1) / -1\n")
+            .unwrap();
+        let base =
+            std::env::temp_dir().join(format!("mosh-divoverflow-smoke-{}", std::process::id()));
         let ir_path = base.with_extension("ll");
         let executable = base.with_extension("bin");
         std::fs::write(&ir_path, ir).unwrap();
