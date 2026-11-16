@@ -835,6 +835,51 @@ mod tests {
     }
 
     #[test]
+    fn parses_struct_declarations_and_named_struct_literals() {
+        let program = parsed(
+            "struct Point:\n    x: Float\n    y: Float\nfunction main():\n    let point = Point { x: 2.0, y: 5.0 }\n    return\n",
+        )
+        .unwrap();
+
+        let Stmt::Struct { name, fields, .. } = &program.statements[0] else {
+            panic!("expected a structure declaration");
+        };
+        assert_eq!(name, "Point");
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].name, "x");
+        assert_eq!(fields[0].ty.name, "Float");
+        assert_eq!(fields[1].name, "y");
+
+        let Stmt::Function { body, .. } = &program.statements[1] else {
+            panic!("expected a function declaration");
+        };
+        let Stmt::Let {
+            value: Some(Expr::StructLiteral { name, fields, .. }),
+            ..
+        } = &body[0]
+        else {
+            panic!("expected a named structure literal");
+        };
+        assert_eq!(name, "Point");
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].0, "x");
+        assert_eq!(fields[1].0, "y");
+    }
+
+    #[test]
+    fn rejects_malformed_struct_declarations_and_literals() {
+        for source in [
+            "struct Point\n    x: Int\n",
+            "struct Point:\nx: Int\n",
+            "struct Point:\n    x Int\n",
+            "let point = Point { x 1 }\n",
+            "let point = Point { x: 1\n",
+        ] {
+            assert!(parsed(source).is_err(), "source should fail: {source:?}");
+        }
+    }
+
+    #[test]
     fn recovering_parser_reports_multiple_independent_errors_and_keeps_valid_statements() {
         let tokens = tokenize("let first = )\nlet valid = 2\nlet second = ]\nlet last = 4\n")
             .expect("source should tokenize");
