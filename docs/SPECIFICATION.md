@@ -112,7 +112,9 @@ The following rules are approved and fixed for the initial primitive type checke
 12. Unary `-` accepts numeric operands; unary `!` accepts `Bool`.
 13. Type errors MUST report the expected and actual types where applicable, together with a source location.
 
-The initial checker recognizes `print` as a provisional polymorphic built-in that accepts values and returns `Unit`; this does not finalize the standard-library design. Iterable/collection typing, member access, indexing, pointers, structures, enumerations, generics, and ownership/borrow checking are outside this primitive-type milestone. The exact width and signedness of `Int`, and the representation/precision of `Float`, remain open decisions.
+The initial checker recognizes `print` as a provisional polymorphic built-in that accepts primitive non-`Unit` values and returns `Unit`; this does not finalize the standard-library design. Iterable/collection typing, member access, indexing, pointers, structures, enumerations, generics, and ownership/borrow checking are outside this primitive-type milestone. The exact width and signedness of `Int`, and the representation/precision of `Float`, remain open decisions.
+
+**Current implementation restriction (not a final language-design decision):** `Unit` is supported as a function return type only. The current native backend does not support `Unit` parameters or local bindings, printing a `Unit` result, or returning an explicit `Unit` expression; Unit-returning functions must use a bare `return` or fall through. These cases are rejected during type checking rather than allowed to reach invalid LLVM generation.
 
 Mosh uses static typing. The compiler MAY infer a type when it can do so unambiguously.
 
