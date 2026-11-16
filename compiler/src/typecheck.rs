@@ -132,6 +132,12 @@ pub fn check(program: &Program) -> Result<(), Vec<TypeError>> {
     }
 
     for statement in &program.statements {
+        if !matches!(statement, Stmt::Function { .. }) {
+            checker.error(
+                "module-level executable statements and global bindings are not supported",
+                statement_span(statement),
+            );
+        }
         checker.statement(statement);
     }
 
@@ -693,6 +699,19 @@ fn statement_guarantees_return(statement: &Stmt) -> bool {
     }
 }
 
+fn statement_span(statement: &Stmt) -> Span {
+    match statement {
+        Stmt::Function { span, .. }
+        | Stmt::Let { span, .. }
+        | Stmt::Return { span, .. }
+        | Stmt::If { span, .. }
+        | Stmt::While { span, .. }
+        | Stmt::For { span, .. }
+        | Stmt::Assign { span, .. }
+        | Stmt::Expression { span, .. } => *span,
+    }
+}
+
 fn expr_span(expression: &Expr) -> Span {
     match expression {
         Expr::Identifier { span, .. }
@@ -719,6 +738,14 @@ mod tests {
         let program = parse(&tokens).expect("source should parse");
         crate::semantic::analyze(&program).expect("source should pass name resolution");
         check(&program)
+    }
+
+    #[test]
+    fn rejects_module_level_statements_and_global_bindings() {
+        let errors = checked("let global: Int = 5\n").unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains(
+            "module-level executable statements and global bindings are not supported"
+        )));
     }
 
     #[test]
@@ -788,7 +815,7 @@ mod tests {
     #[test]
     fn accepts_annotated_and_inferred_values() {
         assert!(
-            checked("let age: Int = 25\nlet name: String = \"Mosh\"\nlet total = age + 5\n")
+            checked("function main():\n    let age: Int = 25\n    let name: String = \"Mosh\"\n    let total = age + 5\n")
                 .is_ok()
         );
     }
@@ -809,7 +836,7 @@ mod tests {
 
     #[test]
     fn rejects_mixed_numeric_arithmetic_without_conversion() {
-        assert!(checked("let result = 1 + 2.0\n")
+        assert!(checked("function main():\n    let result = 1 + 2.0\n")
             .unwrap_err()
             .iter()
             .any(|e| e.message.contains("matching numeric types")));
@@ -817,20 +844,20 @@ mod tests {
 
     #[test]
     fn requires_boolean_conditions() {
-        assert!(checked("if 1:\n    print(1)\n")
+        assert!(checked("function main():\n    if 1:\n        print(1)\n")
             .unwrap_err()
             .iter()
             .any(|e| e.message.contains("if condition must be Bool")));
-        assert!(checked("while true:\n    print(1)\n").is_ok());
+        assert!(checked("function main():\n    while true:\n        print(1)\n").is_ok());
     }
 
     #[test]
     fn checks_function_arguments_and_return_types() {
         assert!(checked(
-            "function add(a: Int, b: Int) -> Int:\n    return a + b\nlet answer = add(1, 2)\n"
+            "function add(a: Int, b: Int) -> Int:\n    return a + b\nfunction main():\n    let answer = add(1, 2)\n"
         )
         .is_ok());
-        assert!(checked("function add(a: Int, b: Int) -> Int:\n    return a + b\nlet answer = add(1, \"two\")\n").unwrap_err().iter().any(|e| e.message.contains("argument 2")));
+        assert!(checked("function add(a: Int, b: Int) -> Int:\n    return a + b\nfunction main():\n    let answer = add(1, \"two\")\n").unwrap_err().iter().any(|e| e.message.contains("argument 2")));
         assert!(checked("function wrong() -> Int:\n    return \"no\"\n")
             .unwrap_err()
             .iter()
@@ -875,7 +902,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_type_names() {
-        assert!(checked("let value: Decimal = 1\n")
+        assert!(checked("function main():\n    let value: Decimal = 1\n")
             .unwrap_err()
             .iter()
             .any(|e| e.message.contains("unknown type 'Decimal'")));
@@ -883,6 +910,6 @@ mod tests {
 
     #[test]
     fn allows_print_as_the_provisional_polymorphic_builtin() {
-        assert!(checked("print(1, \"hello\", true)\n").is_ok());
+        assert!(checked("function main():\n    print(1, \"hello\", true)\n").is_ok());
     }
 }
