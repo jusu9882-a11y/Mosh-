@@ -1321,6 +1321,72 @@ mod tests {
     }
 
     #[test]
+    fn native_executable_compares_strings_and_prints_escaped_text() {
+        use std::process::Command;
+
+        let ir = compile(
+            "function main() -> Int:\n    if \\"line\\\\nbreak\\" == \\"line\\\\nbreak\\":\n        print(\\"line\\\\nbreak\\")\n    return 0\n",
+        )
+        .unwrap();
+        let base = std::env::temp_dir().join(format!("mosh-string-smoke-{}", std::process::id()));
+        let ir_path = base.with_extension("ll");
+        let executable = base.with_extension("bin");
+        std::fs::write(&ir_path, ir).unwrap();
+        let compiled = Command::new("clang")
+            .arg("-x")
+            .arg("ir")
+            .arg("-O0")
+            .arg(&ir_path)
+            .arg("-o")
+            .arg(&executable)
+            .output()
+            .expect("clang must be installed for the native backend test");
+        assert!(
+            compiled.status.success(),
+            "clang rejected string LLVM IR: {}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executed = Command::new(&executable).output().unwrap();
+        let _ = std::fs::remove_file(&ir_path);
+        let _ = std::fs::remove_file(&executable);
+        assert!(executed.status.success());
+        assert_eq!(String::from_utf8_lossy(&executed.stdout), "line\nbreak\n");
+    }
+
+    #[test]
+    fn native_executable_computes_and_compares_floating_point_values() {
+        use std::process::Command;
+
+        let ir = compile(
+            "function main() -> Int:\n    let value = 1.5 + 2.5\n    if value == 4.0:\n        print(value)\n    return 0\n",
+        )
+        .unwrap();
+        let base = std::env::temp_dir().join(format!("mosh-float-smoke-{}", std::process::id()));
+        let ir_path = base.with_extension("ll");
+        let executable = base.with_extension("bin");
+        std::fs::write(&ir_path, ir).unwrap();
+        let compiled = Command::new("clang")
+            .arg("-x")
+            .arg("ir")
+            .arg("-O0")
+            .arg(&ir_path)
+            .arg("-o")
+            .arg(&executable)
+            .output()
+            .expect("clang must be installed for the native backend test");
+        assert!(
+            compiled.status.success(),
+            "clang rejected floating-point LLVM IR: {}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executed = Command::new(&executable).output().unwrap();
+        let _ = std::fs::remove_file(&ir_path);
+        let _ = std::fs::remove_file(&executable);
+        assert!(executed.status.success());
+        assert_eq!(String::from_utf8_lossy(&executed.stdout), "4\n");
+    }
+
+    #[test]
     fn native_executable_runs_mutable_while_loop() {
         use std::process::Command;
 
