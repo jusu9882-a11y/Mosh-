@@ -743,9 +743,9 @@ mod tests {
     #[test]
     fn rejects_module_level_statements_and_global_bindings() {
         let errors = checked("let global: Int = 5\n").unwrap_err();
-        assert!(errors.iter().any(|error| error.message.contains(
-            "module-level executable statements and global bindings are not supported"
-        )));
+        assert!(errors.iter().any(|error| error
+            .message
+            .contains("module-level executable statements and global bindings are not supported")));
     }
 
     #[test]
