@@ -382,6 +382,14 @@ mod tests {
     }
 
     #[test]
+    fn recognizes_range_as_the_builtin_for_loop_iterable() {
+        assert!(checked(
+            "function main():\n    for item in range(3):\n        print(item)\n"
+        )
+        .is_ok());
+    }
+
+    #[test]
     fn rejects_return_outside_a_function() {
         let errors = checked("return 1\n").unwrap_err();
         assert!(errors
