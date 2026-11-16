@@ -945,25 +945,24 @@ mod tests {
 
     #[test]
     fn rejects_unit_local_bindings_and_parameters() {
-        let local_errors =
-            checked("function main():\n    let value: Unit\n").unwrap_err();
-        assert!(local_errors
-            .iter()
-            .any(|error| error.message.contains("local bindings cannot have type Unit")));
+        let local_errors = checked("function main():\n    let value: Unit\n").unwrap_err();
+        assert!(local_errors.iter().any(|error| error
+            .message
+            .contains("local bindings cannot have type Unit")));
 
         let parameter_errors =
             checked("function greet(value: Unit):\n    print(\"hello\")\n").unwrap_err();
-        assert!(parameter_errors
-            .iter()
-            .any(|error| error.message.contains("function parameters cannot have type Unit")));
+        assert!(parameter_errors.iter().any(|error| error
+            .message
+            .contains("function parameters cannot have type Unit")));
     }
 
     #[test]
     fn rejects_explicit_unit_return_expressions() {
         let errors = checked("function main():\n    return print(1)\n").unwrap_err();
-        assert!(errors
-            .iter()
-            .any(|error| error.message.contains("a Unit function must use a bare return")));
+        assert!(errors.iter().any(|error| error
+            .message
+            .contains("a Unit function must use a bare return")));
     }
 
     #[test]
