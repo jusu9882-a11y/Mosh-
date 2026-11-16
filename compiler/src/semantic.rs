@@ -130,7 +130,11 @@ impl Analyzer {
 
     fn statement(&mut self, statement: &Stmt) {
         match statement {
-            Stmt::Struct { .. } => {}
+            Stmt::Struct { span, .. } => {
+                if self.function_depth > 0 {
+                    self.error("structure declarations are only allowed at module scope", *span);
+                }
+            }
             Stmt::Function {
                 name,
                 params,
@@ -364,6 +368,32 @@ mod tests {
         let tokens = tokenize(source).expect("test source should tokenize");
         let program = parse(&tokens).expect("test source should parse");
         analyze(&program)
+    }
+
+    #[test]
+    fn validates_struct_literal_fields_and_rejects_unknown_structs() {
+        assert!(checked(
+            "struct Point:\n    x: Int\n    y: Int\nfunction main():\n    let point = Point { x: 1, y: 2 }\n    return\n"
+        ).is_ok());
+
+        let missing = checked(
+            "struct Point:\n    x: Int\n    y: Int\nfunction main():\n    let point = Point { x: 1 }\n    return\n"
+        ).unwrap_err();
+        assert!(missing.iter().any(|error| error.message.contains("missing field 'y'")));
+
+        let unknown = checked(
+            "function main():\n    let point = Missing { x: 1 }\n    return\n"
+        ).unwrap_err();
+        assert!(unknown.iter().any(|error| error.message.contains("unknown structure type 'Missing'")));
+    }
+
+    #[test]
+    fn rejects_duplicate_structure_and_field_declarations() {
+        let errors = checked(
+            "struct Point:\n    x: Int\n    x: Int\nstruct Point:\n    y: Int\n"
+        ).unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains("duplicate field 'x'")));
+        assert!(errors.iter().any(|error| error.message.contains("duplicate declaration of 'Point'")));
     }
 
     #[test]
