@@ -548,7 +548,9 @@ impl Checker {
                 {
                     if name == "print" {
                         for argument in arguments {
-                            self.expression(argument);
+                            if self.expression(argument) == Type::Unit {
+                                self.error("cannot print a Unit value", expr_span(argument));
+                            }
                         }
                         return Type::Unit;
                     }
@@ -920,6 +922,17 @@ mod tests {
             .unwrap_err()
             .iter()
             .any(|e| e.message.contains("unknown type 'Decimal'")));
+    }
+
+    #[test]
+    fn rejects_printing_unit_values() {
+        let errors = checked(
+            "function greet():\n    print(\"hello\")\nfunction main():\n    print(greet())\n",
+        )
+        .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("cannot print a Unit value")));
     }
 
     #[test]
