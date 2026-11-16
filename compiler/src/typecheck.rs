@@ -12,6 +12,7 @@ enum Type {
     Bool,
     String,
     Unit,
+    Struct(u32),
     Unknown,
 }
 
@@ -36,6 +37,7 @@ impl fmt::Display for Type {
             Self::Bool => "Bool",
             Self::String => "String",
             Self::Unit => "Unit",
+            Self::Struct(id) => return write!(f, "structure#{id}"),
             Self::Unknown => "an unknown type",
         })
     }
@@ -57,6 +59,12 @@ impl fmt::Display for TypeError {
     }
 }
 impl std::error::Error for TypeError {}
+
+#[derive(Debug, Clone)]
+struct StructType {
+    id: u32,
+    fields: Vec<(String, Type)>,
+}
 
 #[derive(Debug, Clone)]
 struct FunctionType {
@@ -81,6 +89,7 @@ struct Scope {
 struct Checker {
     scopes: Vec<Scope>,
     functions: HashMap<String, FunctionType>,
+    structures: HashMap<String, StructType>,
     errors: Vec<TypeError>,
     return_types: Vec<Type>,
     ownership: OwnershipState,
@@ -91,14 +100,41 @@ pub fn check(program: &Program) -> Result<(), Vec<TypeError>> {
     let mut checker = Checker::default();
     checker.push_scope();
 
-    // Function signatures are collected first, matching module-level
-    // forward-reference and mutual-recursion name resolution.
+    // Register structure names first so field types may refer to declarations
+    // appearing later in the source file.
+    let mut next_structure_id = 0u32;
     for statement in &program.statements {
-        if let Stmt::Struct { fields, .. } = statement {
-            for field in fields {
-                checker.resolve_type(&field.ty);
+        if let Stmt::Struct { name, .. } = statement {
+            checker.structures.entry(name.clone()).or_insert_with(|| {
+                let id = next_structure_id;
+                next_structure_id += 1;
+                StructType {
+                    id,
+                    fields: Vec::new(),
+                }
+            });
+        }
+    }
+
+    // Resolve structure fields after every structure name is known.
+    for statement in &program.statements {
+        if let Stmt::Struct { name, fields, .. } = statement {
+            let resolved = fields
+                .iter()
+                .filter_map(|field| {
+                    checker
+                        .resolve_type(&field.ty)
+                        .map(|ty| (field.name.clone(), ty))
+                })
+                .collect::<Vec<_>>();
+            if let Some(definition) = checker.structures.get_mut(name) {
+                definition.fields = resolved;
             }
         }
+    }
+
+    // Function signatures are collected after structure names and fields.
+    for statement in &program.statements {
         if let Stmt::Function {
             name,
             params,
@@ -173,19 +209,14 @@ impl Checker {
     }
 
     fn resolve_type(&mut self, syntax: &TypeExpr) -> Option<Type> {
-        match Type::from_name(&syntax.name) {
-            Some(ty) => Some(ty),
-            None => {
-                self.error(
-                    format!(
-                        "unknown type '{}'; expected Int, Float, Bool, String, or Unit",
-                        syntax.name
-                    ),
-                    syntax.span,
-                );
-                None
-            }
-        }
+        Type::from_name(&syntax.name).or_else(|| {
+            self.structures
+                .get(&syntax.name)
+                .map(|definition| Type::Struct(definition.id))
+        }).or_else(|| {
+            self.error(format!("unknown type '{}'", syntax.name), syntax.span);
+            None
+        })
     }
 
     fn resolve_parameter_type(&mut self, syntax: &TypeExpr) -> Option<Type> {
@@ -559,16 +590,44 @@ impl Checker {
             Expr::String { .. } => Type::String,
             Expr::Boolean { .. } => Type::Bool,
             Expr::StructLiteral { name, fields, span } => {
-                for (_, value, _) in fields {
-                    self.expression(value);
+                let Some(definition) = self.structures.get(name).cloned() else {
+                    for (_, value, _) in fields {
+                        self.expression(value);
+                    }
+                    self.error(format!("unknown structure type '{name}'"), *span);
+                    return Type::Unknown;
+                };
+
+                let mut provided = Vec::new();
+                for (field_name, value, field_span) in fields {
+                    let actual = self.expression(value);
+                    if provided.iter().any(|seen: &String| seen == field_name) {
+                        self.error(format!("field '{field_name}' is specified more than once"), *field_span);
+                        continue;
+                    }
+                    provided.push(field_name.clone());
+                    match definition.fields.iter().find(|(name, _)| name == field_name) {
+                        Some((_, expected)) => self.expect_type(
+                            actual,
+                            *expected,
+                            expr_span(value),
+                            &format!("field '{field_name}' in '{name}'"),
+                        ),
+                        None => self.error(
+                            format!("structure '{name}' has no field '{field_name}'"),
+                            *field_span,
+                        ),
+                    }
                 }
-                self.error(
-                    format!(
-                        "structure value '{name}' is not yet supported by native type lowering"
-                    ),
-                    *span,
-                );
-                Type::Unknown
+                for (field_name, _) in &definition.fields {
+                    if !provided.contains(field_name) {
+                        self.error(
+                            format!("missing field '{field_name}' in structure literal '{name}'"),
+                            *span,
+                        );
+                    }
+                }
+                Type::Struct(definition.id)
             }
             Expr::Identifier { name, span } => match self.lookup(name) {
                 Some(variable) => {
@@ -698,10 +757,35 @@ impl Checker {
                     Type::Unknown
                 }
             }
-            Expr::Member { object, span, .. } => {
-                self.expression(object);
-                self.error("member access requires compound types, which are not in the initial type checker", *span);
-                Type::Unknown
+            Expr::Member { object, name, span } => {
+                match self.expression(object) {
+                    Type::Struct(id) => self
+                        .structures
+                        .values()
+                        .find(|definition| definition.id == id)
+                        .and_then(|definition| {
+                            definition
+                                .fields
+                                .iter()
+                                .find(|(field_name, _)| field_name == name)
+                                .map(|(_, ty)| *ty)
+                        })
+                        .unwrap_or_else(|| {
+                            self.error(
+                                format!("structure has no field '{name}'"),
+                                *span,
+                            );
+                            Type::Unknown
+                        }),
+                    Type::Unknown => Type::Unknown,
+                    other => {
+                        self.error(
+                            format!("member access requires a structure, found {other}"),
+                            *span,
+                        );
+                        Type::Unknown
+                    }
+                }
             }
             Expr::Index {
                 object,
