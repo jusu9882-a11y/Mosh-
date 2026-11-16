@@ -10,8 +10,12 @@ use std::fmt;
 pub enum LayoutType {
     Unit,
     Bool,
-    Int { bits: u16 },
-    Float { bits: u16 },
+    Int {
+        bits: u16,
+    },
+    Float {
+        bits: u16,
+    },
     Pointer,
     Array {
         element: Box<LayoutType>,
@@ -91,7 +95,10 @@ impl fmt::Display for LayoutError {
                 "invalid target pointer layout: size {size}, alignment {align}"
             ),
             Self::UnsupportedScalarWidth { kind, bits } => {
-                write!(f, "unsupported {kind} width {bits}; expected 8, 16, 32, 64, or 128")
+                write!(
+                    f,
+                    "unsupported {kind} width {bits}; expected 8, 16, 32, 64, or 128"
+                )
             }
             Self::DuplicateField { structure, field } => {
                 write!(f, "duplicate field '{field}' in structure '{structure}'")
@@ -132,10 +139,7 @@ fn scalar_layout(kind: &'static str, bits: u16) -> Result<TypeLayoutInfo, Layout
     Ok(TypeLayoutInfo::scalar(size, size))
 }
 
-fn layout_inner(
-    ty: &LayoutType,
-    target: TargetDataLayout,
-) -> Result<TypeLayoutInfo, LayoutError> {
+fn layout_inner(ty: &LayoutType, target: TargetDataLayout) -> Result<TypeLayoutInfo, LayoutError> {
     match ty {
         LayoutType::Unit => Ok(TypeLayoutInfo::scalar(0, 1)),
         LayoutType::Bool => Ok(TypeLayoutInfo::scalar(1, 1)),
@@ -243,7 +247,11 @@ mod tests {
         let layout = compute_layout(&ty, TargetDataLayout::LINUX_X86_64).unwrap();
         assert_eq!((layout.size, layout.align), (24, 8));
         assert_eq!(
-            layout.fields.iter().map(|field| field.offset).collect::<Vec<_>>(),
+            layout
+                .fields
+                .iter()
+                .map(|field| field.offset)
+                .collect::<Vec<_>>(),
             vec![0, 8, 16]
         );
     }
