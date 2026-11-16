@@ -226,10 +226,7 @@ fn binding_is_visible(
             .instruction
             .is_some_and(|position| position < use_position);
     }
-    flow.reachable
-        .get(use_block)
-        .copied()
-        .unwrap_or(false)
+    flow.reachable.get(use_block).copied().unwrap_or(false)
         && flow.reachable.get(binding.block).copied().unwrap_or(false)
         && flow.dominators[use_block].contains(&binding.block)
 }
@@ -244,14 +241,11 @@ fn resolve_binding<'a>(
     bindings
         .iter()
         .filter(|binding| {
-            binding.name == name
-                && binding_is_visible(binding, use_block, use_position, flow)
+            binding.name == name && binding_is_visible(binding, use_block, use_position, flow)
         })
         .max_by_key(|binding| {
             (
-                flow.dominators
-                    .get(binding.block)
-                    .map_or(0, HashSet::len),
+                flow.dominators.get(binding.block).map_or(0, HashSet::len),
                 binding.instruction.unwrap_or(0),
             )
         })
@@ -284,7 +278,13 @@ fn infer_value_type(
             }
             InstructionKind::Unary { operator, operand } => {
                 let operand_type = infer_value_type(
-                    *operand, definitions, bindings, flow, signatures, cache, active,
+                    *operand,
+                    definitions,
+                    bindings,
+                    flow,
+                    signatures,
+                    cache,
+                    active,
                 )?;
                 match operator {
                     TokenKind::Minus if matches!(operand_type, MirType::Int | MirType::Float) => {
@@ -300,10 +300,22 @@ fn infer_value_type(
                 right,
             } => {
                 let left = infer_value_type(
-                    *left, definitions, bindings, flow, signatures, cache, active,
+                    *left,
+                    definitions,
+                    bindings,
+                    flow,
+                    signatures,
+                    cache,
+                    active,
                 )?;
                 let right = infer_value_type(
-                    *right, definitions, bindings, flow, signatures, cache, active,
+                    *right,
+                    definitions,
+                    bindings,
+                    flow,
+                    signatures,
+                    cache,
+                    active,
                 )?;
                 match operator {
                     TokenKind::Plus
@@ -511,7 +523,12 @@ impl<'a> FunctionEmitter<'a> {
         })
     }
 
-    fn emit_instruction(&mut self, instruction: &Instruction, block_index: usize, instruction_index: usize) {
+    fn emit_instruction(
+        &mut self,
+        instruction: &Instruction,
+        block_index: usize,
+        instruction_index: usize,
+    ) {
         match &instruction.kind {
             InstructionKind::Integer(text) => match text.replace('_', "").parse::<i64>() {
                 Ok(value) => {
@@ -557,7 +574,8 @@ impl<'a> FunctionEmitter<'a> {
                             && binding.instruction == Some(instruction_index)
                     });
                     let Some(binding) = binding else {
-                        self.errors.push(error(format!("missing storage binding for local '{name}'")));
+                        self.errors
+                            .push(error(format!("missing storage binding for local '{name}'")));
                         return;
                     };
                     match self.value(*value) {
