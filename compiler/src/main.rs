@@ -7,8 +7,8 @@ mod typecheck;
 
 use std::env;
 use std::fs;
-use std::process::{Command, ExitCode};
 use std::path::Path;
+use std::process::{Command, ExitCode};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -28,7 +28,9 @@ fn print_help() {
     println!("The lex and parse commands are development tools.");
     println!("The check command runs parsing, name resolution, and static type checking.");
     println!("The mir command lowers a checked program to Mosh IR.");
-    println!("The build command generates LLVM IR and invokes clang to create a native executable.");
+    println!(
+        "The build command generates LLVM IR and invokes clang to create a native executable."
+    );
 }
 
 fn read_source(path: &str) -> Result<String, ExitCode> {
@@ -178,7 +180,6 @@ fn run_mir(path: &str) -> ExitCode {
     }
 }
 
-
 fn run_build(path: &str, output: Option<&str>) -> ExitCode {
     let source = match read_source(path) {
         Ok(source) => source,
@@ -229,16 +230,17 @@ fn run_build(path: &str, output: Option<&str>) -> ExitCode {
         .file_stem()
         .and_then(|name| name.to_str())
         .unwrap_or("mosh");
-    let ir_path = std::env::temp_dir().join(format!(
-        "moshc-{}-{source_name}.ll",
-        std::process::id()
-    ));
+    let ir_path =
+        std::env::temp_dir().join(format!("moshc-{}-{source_name}.ll", std::process::id()));
     if let Err(error) = fs::write(&ir_path, ir) {
         eprintln!("moshc: cannot write temporary LLVM IR: {error}");
         return ExitCode::from(1);
     }
     let default_output = Path::new(path).with_extension("");
-    let output_path = output.map(Path::new).map(Path::to_path_buf).unwrap_or(default_output);
+    let output_path = output
+        .map(Path::new)
+        .map(Path::to_path_buf)
+        .unwrap_or(default_output);
     let result = Command::new("clang")
         .arg("-x")
         .arg("ir")
@@ -331,7 +333,7 @@ fn main() -> ExitCode {
                 }
             }
             run_build(&path, output.as_deref())
-        },
+        }
         Some(other) => {
             eprintln!("moshc: unsupported command or argument: {other}");
             eprintln!("Run 'moshc --help' for usage.");
