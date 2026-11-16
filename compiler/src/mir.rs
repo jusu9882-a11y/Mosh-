@@ -1336,8 +1336,10 @@ mod tests {
             .any(|b| matches!(b.terminator.as_ref(), Some(Terminator::Jump(_)))));
     }
     #[test]
-    fn lowers_module_statements_into_an_initializer() {
-        let module = compile("let answer: Int = 42\nprint(answer)\n").unwrap();
+    fn lowering_can_still_construct_a_module_initializer_for_internal_use() {
+        let tokens = tokenize("let answer: Int = 42\nprint(answer)\n").unwrap();
+        let program = parse(&tokens).unwrap();
+        let module = lower(&program).unwrap();
         assert_eq!(module.functions[0].name, "__mosh_init");
     }
 
