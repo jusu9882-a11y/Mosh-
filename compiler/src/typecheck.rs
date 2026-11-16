@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::lexer::{Span, TokenKind};
+use crate::ownership::{OwnershipState, Place};
 use crate::parser::{Expr, Program, Stmt, TypeExpr};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +69,7 @@ struct Variable {
     ty: Type,
     mutable: bool,
     initialized: bool,
+    ownership_id: u64,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -81,6 +83,8 @@ struct Checker {
     functions: HashMap<String, FunctionType>,
     errors: Vec<TypeError>,
     return_types: Vec<Type>,
+    ownership: OwnershipState,
+    next_binding_id: u64,
 }
 
 pub fn check(program: &Program) -> Result<(), Vec<TypeError>> {
@@ -196,7 +200,7 @@ impl Checker {
             .find_map(|scope| scope.variables.get(name).copied())
     }
 
-    fn define(&mut self, name: &str, variable: Variable, span: Span) {
+    fn define(&mut self, name: &str, mut variable: Variable, span: Span) {
         let duplicate = self
             .scopes
             .last()
@@ -206,11 +210,34 @@ impl Checker {
         if duplicate {
             self.error(format!("duplicate typed binding '{name}'"), span);
         } else {
+            variable.ownership_id = self.next_binding_id;
+            self.next_binding_id = self
+                .next_binding_id
+                .checked_add(1)
+                .expect("binding ID space exhausted");
             self.scopes
                 .last_mut()
                 .expect("checker always has a scope")
                 .variables
                 .insert(name.to_owned(), variable);
+        }
+    }
+
+    fn ownership_error(&mut self, error: impl fmt::Display, span: Span) {
+        self.error(error.to_string(), span);
+    }
+
+    fn consume_if_owned(&mut self, expression: &Expr, ty: Type) {
+        if ty != Type::String {
+            return;
+        }
+        if let Expr::Identifier { name, span } = expression {
+            if let Some(variable) = self.lookup(name) {
+                let place = Place::new(variable.ownership_id.to_string());
+                if let Err(error) = self.ownership.move_out(place) {
+                    self.ownership_error(error, *span);
+                }
+            }
         }
     }
 
@@ -242,6 +269,7 @@ impl Checker {
                     .unwrap_or(Type::Unit);
                 let signature = self.functions.get(name).cloned();
                 self.push_scope();
+                self.ownership = OwnershipState::new();
                 self.return_types.push(result);
                 for (index, parameter) in params.iter().enumerate() {
                     if let Some(ty) = self.resolve_type(&parameter.ty) {
@@ -265,6 +293,7 @@ impl Checker {
                                 ty,
                                 mutable: false,
                                 initialized: true,
+                                ownership_id: 0,
                             },
                             parameter.span,
                         );
@@ -281,6 +310,7 @@ impl Checker {
                 }
                 self.return_types.pop();
                 self.pop_scope();
+                self.ownership = OwnershipState::new();
                 let _ = span;
             }
             Stmt::Let {
@@ -292,6 +322,9 @@ impl Checker {
             } => {
                 let annotation = ty.as_ref().and_then(|syntax| self.resolve_type(syntax));
                 let inferred = value.as_ref().map(|expr| self.expression(expr));
+                if let (Some(expression), Some(actual)) = (value.as_ref(), inferred) {
+                    self.consume_if_owned(expression, actual);
+                }
                 let final_type = match (annotation, inferred) {
                     (Some(expected), Some(actual)) => {
                         self.expect_type(
@@ -315,6 +348,7 @@ impl Checker {
                         ty: final_type,
                         mutable: *mutable,
                         initialized: value.is_some(),
+                        ownership_id: 0,
                     },
                     *span,
                 );
@@ -326,6 +360,9 @@ impl Checker {
                     .unwrap_or(Type::Unit);
                 if let Some(expected) = self.return_types.last().copied() {
                     self.expect_type(actual, expected, *span, "return type mismatch");
+                    if let Some(expression) = value.as_ref() {
+                        self.consume_if_owned(expression, actual);
+                    }
                     if expected == Type::Unit && value.is_some() && actual == Type::Unit {
                         self.error("a Unit function must use a bare return", *span);
                     }
@@ -345,17 +382,29 @@ impl Checker {
                     "if condition must be Bool",
                 );
                 let before = self.scopes.clone();
+                let ownership_before = self.ownership.clone();
                 self.block(then_body);
                 let after_then = self.scopes.clone();
+                let ownership_after_then = self.ownership.clone();
                 self.scopes = before.clone();
+                self.ownership = ownership_before.clone();
                 if let Some(body) = else_body {
                     self.block(body);
                 }
                 let after_else = self.scopes.clone();
+                let ownership_after_else = self.ownership.clone();
                 let then_returns = block_guarantees_return(then_body);
                 let else_returns = else_body
                     .as_ref()
                     .is_some_and(|body| block_guarantees_return(body));
+                self.ownership = match (then_returns, else_returns, else_body.is_some()) {
+                    (true, false, true) => ownership_after_else,
+                    (false, true, true) => ownership_after_then,
+                    _ => OwnershipState::join(&[
+                        &ownership_after_then,
+                        &ownership_after_else,
+                    ]),
+                };
                 for (scope_index, scope) in self.scopes.iter_mut().enumerate() {
                     for (name, variable) in &mut scope.variables {
                         let then_initialized = after_then
@@ -398,9 +447,16 @@ impl Checker {
                     "while condition must be Bool",
                 );
                 let before = self.scopes.clone();
+                let ownership_before = self.ownership.clone();
                 self.block(body);
-                // A while-loop may execute zero times, so assignments made only
-                // inside its body are not definitely initialized afterwards.
+                let ownership_after_body = self.ownership.clone();
+                // A while-loop may execute zero times. Join the incoming state
+                // with the body state unless every body path returns.
+                self.ownership = if block_guarantees_return(body) {
+                    ownership_before
+                } else {
+                    OwnershipState::join(&[&ownership_before, &ownership_after_body])
+                };
                 self.scopes = before;
             }
             Stmt::For {
@@ -425,6 +481,7 @@ impl Checker {
                         ty: Type::Unknown,
                         mutable: false,
                         initialized: true,
+                        ownership_id: 0,
                     },
                     *span,
                 );
@@ -456,6 +513,13 @@ impl Checker {
                         }
                         self.expect_type(actual, variable.ty, *span, "assignment type mismatch");
                         if variable.mutable && actual != Type::Unknown {
+                            self.consume_if_owned(value, actual);
+                            if actual == Type::String {
+                                let place = Place::new(variable.ownership_id.to_string());
+                                if let Err(error) = self.ownership.assign(place) {
+                                    self.ownership_error(error, *span);
+                                }
+                            }
                             if let Some(binding) = self
                                 .scopes
                                 .iter_mut()
@@ -498,6 +562,12 @@ impl Checker {
                             format!("binding '{name}' may be used before it is initialized"),
                             *span,
                         );
+                    }
+                    if variable.ty == Type::String {
+                        let place = Place::new(variable.ownership_id.to_string());
+                        if let Err(error) = self.ownership.read(&place) {
+                            self.ownership_error(error, *span);
+                        }
                     }
                     variable.ty
                 }
@@ -585,6 +655,9 @@ impl Checker {
                                     expr_span(argument),
                                     &format!("argument {} to '{name}'", index + 1),
                                 );
+                                if expected == Type::String && actual == Type::String {
+                                    self.consume_if_owned(argument, actual);
+                                }
                             }
                         }
                         signature.result
