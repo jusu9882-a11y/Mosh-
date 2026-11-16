@@ -351,10 +351,7 @@ mod tests {
     use super::run_build;
 
     fn assert_build_rejects(name: &str, source_text: &str) {
-        let base = std::env::temp_dir().join(format!(
-            "moshc-cli-{name}-{}",
-            std::process::id()
-        ));
+        let base = std::env::temp_dir().join(format!("moshc-cli-{name}-{}", std::process::id()));
         let source = base.with_extension("mosh");
         std::fs::write(&source, source_text).unwrap();
 
