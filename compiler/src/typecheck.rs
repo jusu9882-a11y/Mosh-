@@ -222,6 +222,10 @@ impl Checker {
                 body,
                 span,
             } => {
+                if !self.return_types.is_empty() {
+                    self.error("nested function declarations are not supported", *span);
+                    return;
+                }
                 let result = return_type
                     .as_ref()
                     .and_then(|ty| self.resolve_type(ty))
@@ -738,6 +742,17 @@ mod tests {
         let program = parse(&tokens).expect("source should parse");
         crate::semantic::analyze(&program).expect("source should pass name resolution");
         check(&program)
+    }
+
+    #[test]
+    fn rejects_nested_functions_until_lowering_is_implemented() {
+        let errors = checked(
+            "function main():\n    function helper():\n        print(\"nested\")\n",
+        )
+        .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("nested function declarations are not supported")));
     }
 
     #[test]
