@@ -1331,6 +1331,7 @@ mod tests {
     return 0
 "#,
         )
+        .unwrap();
         let base = std::env::temp_dir().join(format!("mosh-string-smoke-{}", std::process::id()));
         let ir_path = base.with_extension("ll");
         let executable = base.with_extension("bin");
