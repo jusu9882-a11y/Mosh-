@@ -181,6 +181,12 @@ fn function_locals(
 ) -> Result<HashMap<String, MirType>> {
     let mut locals = HashMap::new();
     for parameter in &function.parameters {
+        if parameter.ty == MirType::Unit {
+            return Err(vec![error(format!(
+                "function '{}' cannot accept Unit parameters in the native backend",
+                function.name
+            ))]);
+        }
         if locals
             .insert(parameter.name.clone(), parameter.ty)
             .is_some()
@@ -214,6 +220,13 @@ fn function_locals(
                     )
                 });
                 if let Some(ty) = ty {
+                    if ty == MirType::Unit {
+                        errors.push(error(format!(
+                            "local '{}' in function '{}' cannot have type Unit",
+                            name, function.name
+                        )));
+                        continue;
+                    }
                     if locals.insert(name.clone(), ty).is_some() {
                         errors.push(error(format!(
                             "function '{}' declares local '{}' more than once; this backend version does not yet support shadowed local storage",
@@ -1002,6 +1015,18 @@ mod tests {
         let _ = std::fs::remove_file(&executable);
         assert!(executed.status.success());
         assert_eq!(String::from_utf8_lossy(&executed.stdout), "3\n");
+    }
+
+    #[test]
+    fn rejects_unit_parameters_and_locals_before_emitting_invalid_llvm() {
+        assert!(compile(
+            "function take(value: Unit) -> Unit:\n    return\nfunction main() -> Unit:\n    return\n",
+        )
+        .is_err());
+        assert!(compile(
+            "function main() -> Unit:\n    let result = print(1)\n    return\n",
+        )
+        .is_err());
     }
 
     #[test]
