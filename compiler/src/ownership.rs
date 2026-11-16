@@ -149,12 +149,9 @@ impl OwnershipState {
         if self.moved.iter().any(|moved| {
             moved.overlaps(place)
                 && !(moved.is_prefix_of(place)
-                    && self
-                        .reinitialized
-                        .iter()
-                        .any(|initialized| {
-                            moved.is_prefix_of(initialized) && initialized.is_prefix_of(place)
-                        }))
+                    && self.reinitialized.iter().any(|initialized| {
+                        moved.is_prefix_of(initialized) && initialized.is_prefix_of(place)
+                    }))
         }) {
             Err(OwnershipError::UseAfterMove(place.clone()))
         } else {
