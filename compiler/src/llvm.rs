@@ -1135,6 +1135,13 @@ mod tests {
         generate(&module)
     }
 
+    fn rejected_by_typechecker(source: &str) -> bool {
+        let tokens = lexer::tokenize(source).unwrap();
+        let program = parser::parse(&tokens).unwrap();
+        semantic::analyze(&program).unwrap();
+        typecheck::check(&program).is_err()
+    }
+
     #[test]
     fn emits_native_llvm_for_arithmetic_main() {
         let ir = compile("function main() -> Int:\n    return 40 + 2\n").unwrap();
@@ -1537,13 +1544,12 @@ mod tests {
 
     #[test]
     fn rejects_unit_parameters_and_locals_before_emitting_invalid_llvm() {
-        assert!(compile(
+        assert!(rejected_by_typechecker(
             "function take(value: Unit) -> Unit:\n    return\nfunction main() -> Unit:\n    return\n",
-        )
-        .is_err());
-        assert!(
-            compile("function main() -> Unit:\n    let result = print(1)\n    return\n",).is_err()
-        );
+        ));
+        assert!(rejected_by_typechecker(
+            "function main() -> Unit:\n    let result = print(1)\n    return\n",
+        ));
     }
 
     #[test]
