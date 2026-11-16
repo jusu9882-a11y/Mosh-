@@ -324,7 +324,9 @@ impl Checker {
                 }
                 let after_else = self.scopes.clone();
                 let then_returns = block_guarantees_return(then_body);
-                let else_returns = else_body.as_ref().is_some_and(|body| block_guarantees_return(body));
+                let else_returns = else_body
+                    .as_ref()
+                    .is_some_and(|body| block_guarantees_return(body));
                 for (scope_index, scope) in self.scopes.iter_mut().enumerate() {
                     for (name, variable) in &mut scope.variables {
                         let then_initialized = after_then
