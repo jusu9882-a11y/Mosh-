@@ -1,0 +1,3 @@
+function main() -> Int:
+    print("Hello, Mosh!")
+    return 0

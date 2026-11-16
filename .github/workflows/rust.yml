@@ -21,6 +21,8 @@ jobs:
         working-directory: compiler
     steps:
       - uses: actions/checkout@v4
+      - name: Install LLVM Clang
+        run: sudo apt-get update && sudo apt-get install -y clang
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -30,3 +32,9 @@ jobs:
         run: cargo test --all-targets
       - name: Check compilation
         run: cargo check --all-targets
+      - name: Build and run the Mosh hello-world example
+        run: |
+          cargo build --release
+          ./target/release/moshc build ../examples/hello.mosh -o target/hello
+          output="$(./target/hello)"
+          test "$output" = "Hello, Mosh!"
