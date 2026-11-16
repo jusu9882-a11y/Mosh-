@@ -346,12 +346,13 @@ impl Checker {
 
                         // A branch that always returns cannot reach the join.
                         // Only merge states from branches that can continue.
-                        variable.initialized = match (then_returns, else_returns, else_body.is_some()) {
-                            (true, false, true) => else_initialized,
-                            (false, true, true) => then_initialized,
-                            (true, true, true) => then_initialized || else_initialized,
-                            _ => then_initialized && else_initialized,
-                        };
+                        variable.initialized =
+                            match (then_returns, else_returns, else_body.is_some()) {
+                                (true, false, true) => else_initialized,
+                                (false, true, true) => then_initialized,
+                                (true, true, true) => then_initialized || else_initialized,
+                                _ => then_initialized && else_initialized,
+                            };
                     }
                 }
             }
