@@ -1,0 +1,8 @@
+function main() -> Int:
+    let enabled: Bool = true
+    let message: String = "Mosh"
+    let ratio: Float = 3.5
+    let mask: Int = 7 & 3
+    if enabled:
+        print(message, ratio, mask)
+    return 0
