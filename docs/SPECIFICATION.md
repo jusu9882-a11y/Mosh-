@@ -114,6 +114,8 @@ The following rules are approved and fixed for the initial primitive type checke
 
 The initial checker recognizes `print` as a provisional polymorphic built-in that accepts primitive non-`Unit` values and returns `Unit`; this does not finalize the standard-library design. Iterable/collection typing, member access, indexing, pointers, structures, enumerations, generics, and ownership/borrow checking are outside this primitive-type milestone. The exact width and signedness of `Int`, and the representation/precision of `Float`, remain open decisions.
 
+**Implementation status:** the current frontend additionally performs preliminary move checking for `String` identifiers. Binding initialization, by-value user-function arguments, and returns consume an identifier; assignment can reinitialize a moved binding; `print` reads without consuming. The checker conservatively merges ownership state across `if` and `while`. This is only a first move-checking slice: borrow syntax/lifetimes, move behavior for compound types, and ownership of member/index projections are not implemented. These implementation details do not close the remaining type-system design decisions.
+
 **Current implementation restriction (not a final language-design decision):** `Unit` is supported as a function return type only. The current native backend does not support `Unit` parameters or local bindings, printing a `Unit` result, or returning an explicit `Unit` expression; Unit-returning functions must use a bare `return` or fall through. These cases are rejected during type checking rather than allowed to reach invalid LLVM generation.
 
 Mosh uses static typing. The compiler MAY infer a type when it can do so unambiguously.
