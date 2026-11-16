@@ -1285,6 +1285,39 @@ mod tests {
     }
 
     #[test]
+    fn native_executable_runs_range_for_loop() {
+        use std::process::Command;
+
+        let ir = compile(
+            "function main() -> Int:\n    mut total: Int = 0\n    for item in range(1, 4):\n        total = total + item\n    print(total)\n    return 0\n",
+        )
+        .unwrap();
+        let base = std::env::temp_dir().join(format!("mosh-range-smoke-{}", std::process::id()));
+        let ir_path = base.with_extension("ll");
+        let executable = base.with_extension("bin");
+        std::fs::write(&ir_path, ir).unwrap();
+        let compiled = Command::new("clang")
+            .arg("-x")
+            .arg("ir")
+            .arg("-O0")
+            .arg(&ir_path)
+            .arg("-o")
+            .arg(&executable)
+            .output()
+            .expect("clang must be installed for the native backend test");
+        assert!(
+            compiled.status.success(),
+            "clang rejected range-loop LLVM IR: {}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let executed = Command::new(&executable).output().unwrap();
+        let _ = std::fs::remove_file(&ir_path);
+        let _ = std::fs::remove_file(&executable);
+        assert!(executed.status.success());
+        assert_eq!(String::from_utf8_lossy(&executed.stdout), "6\n");
+    }
+
+    #[test]
     fn native_executable_runs_recursive_function_calls() {
         use std::process::Command;
 
