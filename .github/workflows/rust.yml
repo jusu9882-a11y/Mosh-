@@ -48,6 +48,11 @@ jobs:
           ./target/release/moshc build ../examples/fibonacci.mosh -o target/fibonacci
           output="$(./target/fibonacci)"
           test "$output" = "55"
+      - name: Build and run the Mosh primitive-values example
+        run: |
+          ./target/release/moshc build ../examples/primitive_values.mosh -o target/primitive-values
+          output="$(./target/primitive-values)"
+          test "$output" = "Mosh 3.5 3"
       - name: Upload Linux compiler preview
         uses: actions/upload-artifact@v4
         with:
