@@ -447,32 +447,29 @@ impl Checker {
                     span: target_span,
                 } = target
                 {
-                    match self.lookup(name) {
-                        Some(variable) => {
-                            if !variable.mutable {
-                                self.error(
-                                    format!("cannot assign to immutable binding '{name}'"),
-                                    *target_span,
-                                );
-                            }
-                            self.expect_type(
-                                actual,
-                                variable.ty,
-                                *span,
-                                "assignment type mismatch",
+                    if let Some(variable) = self.lookup(name) {
+                        if !variable.mutable {
+                            self.error(
+                                format!("cannot assign to immutable binding '{name}'"),
+                                *target_span,
                             );
-                            if variable.mutable && actual != Type::Unknown {
-                                if let Some(binding) = self
-                                    .scopes
-                                    .iter_mut()
-                                    .rev()
-                                    .find_map(|scope| scope.variables.get_mut(name))
-                                {
-                                    binding.initialized = true;
-                                }
+                        }
+                        self.expect_type(
+                            actual,
+                            variable.ty,
+                            *span,
+                            "assignment type mismatch",
+                        );
+                        if variable.mutable && actual != Type::Unknown {
+                            if let Some(binding) = self
+                                .scopes
+                                .iter_mut()
+                                .rev()
+                                .find_map(|scope| scope.variables.get_mut(name))
+                            {
+                                binding.initialized = true;
                             }
                         }
-                        None => {}
                     }
                 } else {
                     // Member/index assignment needs compound types and is deferred.
