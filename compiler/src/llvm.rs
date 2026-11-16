@@ -1023,10 +1023,9 @@ mod tests {
             "function take(value: Unit) -> Unit:\n    return\nfunction main() -> Unit:\n    return\n",
         )
         .is_err());
-        assert!(compile(
-            "function main() -> Unit:\n    let result = print(1)\n    return\n",
-        )
-        .is_err());
+        assert!(
+            compile("function main() -> Unit:\n    let result = print(1)\n    return\n",).is_err()
+        );
     }
 
     #[test]
