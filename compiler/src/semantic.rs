@@ -399,10 +399,8 @@ mod tests {
             .iter()
             .any(|error| error.message.contains("missing field 'y'")));
 
-        let unknown = checked(
-            "function main():\n    let point = Missing { x: 1 }\n    return\n",
-        )
-        .unwrap_err();
+        let unknown = checked("function main():\n    let point = Missing { x: 1 }\n    return\n")
+            .unwrap_err();
         assert!(unknown
             .iter()
             .any(|error| error.message.contains("unknown structure type 'Missing'")));
@@ -410,10 +408,8 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_structure_and_field_declarations() {
-        let errors = checked(
-            "struct Point:\n    x: Int\n    x: Int\nstruct Point:\n    y: Int\n",
-        )
-        .unwrap_err();
+        let errors = checked("struct Point:\n    x: Int\n    x: Int\nstruct Point:\n    y: Int\n")
+            .unwrap_err();
         assert!(errors
             .iter()
             .any(|error| error.message.contains("duplicate field 'x'")));
