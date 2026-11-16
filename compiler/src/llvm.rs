@@ -1385,6 +1385,56 @@ mod tests {
     }
 
     #[test]
+    fn native_executable_traps_on_integer_remainder_by_zero() {
+        use std::process::Command;
+
+        let ir = compile("function main() -> Int:\n    return 7 % 0\n").unwrap();
+        let base = std::env::temp_dir().join(format!("mosh-remzero-smoke-{}", std::process::id()));
+        let ir_path = base.with_extension("ll");
+        let executable = base.with_extension("bin");
+        std::fs::write(&ir_path, ir).unwrap();
+        let compiled = Command::new("clang")
+            .arg("-x")
+            .arg("ir")
+            .arg("-O0")
+            .arg(&ir_path)
+            .arg("-o")
+            .arg(&executable)
+            .output()
+            .expect("clang must be installed for the native backend test");
+        assert!(compiled.status.success());
+        let executed = Command::new(&executable).output().unwrap();
+        let _ = std::fs::remove_file(&ir_path);
+        let _ = std::fs::remove_file(&executable);
+        assert!(!executed.status.success());
+    }
+
+    #[test]
+    fn native_executable_computes_integer_remainder() {
+        use std::process::Command;
+
+        let ir = compile("function main() -> Int:\n    return 7 % 4\n").unwrap();
+        let base = std::env::temp_dir().join(format!("mosh-rem-smoke-{}", std::process::id()));
+        let ir_path = base.with_extension("ll");
+        let executable = base.with_extension("bin");
+        std::fs::write(&ir_path, ir).unwrap();
+        let compiled = Command::new("clang")
+            .arg("-x")
+            .arg("ir")
+            .arg("-O0")
+            .arg(&ir_path)
+            .arg("-o")
+            .arg(&executable)
+            .output()
+            .expect("clang must be installed for the native backend test");
+        assert!(compiled.status.success());
+        let executed = Command::new(&executable).output().unwrap();
+        let _ = std::fs::remove_file(&ir_path);
+        let _ = std::fs::remove_file(&executable);
+        assert_eq!(executed.status.code(), Some(3));
+    }
+
+    #[test]
     fn native_executable_traps_on_signed_division_overflow() {
         use std::process::Command;
 
