@@ -573,12 +573,7 @@ impl Checker {
                 } = target
                 {
                     let target_type = self.expression(target);
-                    self.expect_type(
-                        actual,
-                        target_type,
-                        *span,
-                        "field assignment type mismatch",
-                    );
+                    self.expect_type(actual, target_type, *span, "field assignment type mismatch");
 
                     if let Expr::Identifier {
                         name: root_name,
@@ -1176,10 +1171,9 @@ mod tests {
     #[test]
     fn rejects_assignment_to_field_of_immutable_structure_binding() {
         let source = "struct Point:\n    x: Int\nfunction main():\n    let point = Point { x: 1 }\n    point.x = 3\n    return\n";
-        assert!(checked(source)
-            .unwrap_err()
-            .iter()
-            .any(|error| error.message.contains("field 'x' of immutable binding 'point'")));
+        assert!(checked(source).unwrap_err().iter().any(|error| error
+            .message
+            .contains("field 'x' of immutable binding 'point'")));
     }
 
     #[test]
