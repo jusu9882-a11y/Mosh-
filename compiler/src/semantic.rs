@@ -257,7 +257,7 @@ impl Analyzer {
             } => {
                 if let Expr::Identifier { name, span } = callee.as_ref() {
                     // print is the compiler's initial built-in output function.
-                    if name != "print" && self.lookup(name).is_none() {
+                    if name != "print" && name != "range" && self.lookup(name).is_none() {
                         self.error(format!("call to undefined function '{name}'"), *span);
                     }
                     if matches!(self.lookup(name), Some(SymbolKind::Variable { .. })) {
