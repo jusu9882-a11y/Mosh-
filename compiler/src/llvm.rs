@@ -443,6 +443,23 @@ impl<'a> FunctionEmitter<'a> {
                     .and_then(|left| self.value(*right).map(|right| (left, right)));
                 match operands {
                     Ok((left, right)) => {
+                        if left_type == Some(MirType::String)
+                            && matches!(operator, TokenKind::Equal | TokenKind::NotEqual)
+                        {
+                            let _ = writeln!(
+                                self.output,
+                                "  %str.cmp.{} = call i32 @strcmp(ptr {}, ptr {})",
+                                id.0, left, right
+                            );
+                            let predicate = if *operator == TokenKind::Equal { "eq" } else { "ne" };
+                            let _ = writeln!(
+                                self.output,
+                                "  %v{} = icmp {} i32 %str.cmp.{}, 0",
+                                id.0, predicate, id.0
+                            );
+                            self.values.insert(id, format!("%v{}", id.0));
+                            return;
+                        }
                         let op = match (operator, ty) {
                             (TokenKind::Plus, MirType::Int) => format!("add i64 {left}, {right}"),
                             (TokenKind::Minus, MirType::Int) => format!("sub i64 {left}, {right}"),
