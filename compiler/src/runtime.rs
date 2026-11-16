@@ -13,20 +13,40 @@ use crate::layout::{compute_layout, LayoutError, LayoutType, TargetDataLayout};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AllocationError {
-    InvalidLayout { size: usize, align: usize },
-    OutOfMemory { size: usize, align: usize },
-    OutOfBounds { offset: usize, length: usize, allocation_size: usize },
+    InvalidLayout {
+        size: usize,
+        align: usize,
+    },
+    OutOfMemory {
+        size: usize,
+        align: usize,
+    },
+    OutOfBounds {
+        offset: usize,
+        length: usize,
+        allocation_size: usize,
+    },
 }
 
 impl fmt::Display for AllocationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidLayout { size, align } =>
-                write!(f, "invalid allocation layout: size {size}, alignment {align}"),
-            Self::OutOfMemory { size, align } =>
-                write!(f, "allocation failed: size {size}, alignment {align}"),
-            Self::OutOfBounds { offset, length, allocation_size } =>
-                write!(f, "memory range {offset}..{} exceeds allocation size {allocation_size}", offset.saturating_add(*length)),
+            Self::InvalidLayout { size, align } => write!(
+                f,
+                "invalid allocation layout: size {size}, alignment {align}"
+            ),
+            Self::OutOfMemory { size, align } => {
+                write!(f, "allocation failed: size {size}, alignment {align}")
+            }
+            Self::OutOfBounds {
+                offset,
+                length,
+                allocation_size,
+            } => write!(
+                f,
+                "memory range {offset}..{} exceeds allocation size {allocation_size}",
+                offset.saturating_add(*length)
+            ),
         }
     }
 }
@@ -95,23 +115,38 @@ impl Allocation {
         // SAFETY: layout was validated above and has non-zero size. The
         // returned allocation is uniquely owned by this value until Drop.
         let raw = unsafe { alloc_zeroed(layout) };
-        let pointer = NonNull::new(raw)
-            .ok_or(AllocationError::OutOfMemory { size, align })?;
+        let pointer = NonNull::new(raw).ok_or(AllocationError::OutOfMemory { size, align })?;
 
-        Ok(Self { pointer, layout, allocated: true })
+        Ok(Self {
+            pointer,
+            layout,
+            allocated: true,
+        })
     }
 
-    pub fn size(&self) -> usize { self.layout.size() }
-    pub fn align(&self) -> usize { self.layout.align() }
-    pub fn is_empty(&self) -> bool { self.size() == 0 }
+    pub fn size(&self) -> usize {
+        self.layout.size()
+    }
+    pub fn align(&self) -> usize {
+        self.layout.align()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.size() == 0
+    }
 
     fn checked_range(&self, offset: usize, length: usize) -> Result<(), AllocationError> {
-        let end = offset.checked_add(length).ok_or(AllocationError::OutOfBounds {
-            offset, length, allocation_size: self.size(),
-        })?;
+        let end = offset
+            .checked_add(length)
+            .ok_or(AllocationError::OutOfBounds {
+                offset,
+                length,
+                allocation_size: self.size(),
+            })?;
         if end > self.size() {
             return Err(AllocationError::OutOfBounds {
-                offset, length, allocation_size: self.size(),
+                offset,
+                length,
+                allocation_size: self.size(),
             });
         }
         Ok(())
@@ -119,12 +154,16 @@ impl Allocation {
 
     pub fn write(&mut self, offset: usize, bytes: &[u8]) -> Result<(), AllocationError> {
         self.checked_range(offset, bytes.len())?;
-        if bytes.is_empty() { return Ok(()); }
+        if bytes.is_empty() {
+            return Ok(());
+        }
         // SAFETY: range checked; allocation is live and mutably borrowed;
         // input slice cannot alias this allocation.
         unsafe {
             std::ptr::copy_nonoverlapping(
-                bytes.as_ptr(), self.pointer.as_ptr().add(offset), bytes.len(),
+                bytes.as_ptr(),
+                self.pointer.as_ptr().add(offset),
+                bytes.len(),
             );
         }
         Ok(())
@@ -133,12 +172,16 @@ impl Allocation {
     pub fn read(&self, offset: usize, length: usize) -> Result<Vec<u8>, AllocationError> {
         self.checked_range(offset, length)?;
         let mut result = vec![0; length];
-        if length == 0 { return Ok(result); }
+        if length == 0 {
+            return Ok(result);
+        }
         // SAFETY: range checked, allocation is live, and result is a distinct
         // initialized buffer of exactly length bytes.
         unsafe {
             std::ptr::copy_nonoverlapping(
-                self.pointer.as_ptr().add(offset), result.as_mut_ptr(), length,
+                self.pointer.as_ptr().add(offset),
+                result.as_mut_ptr(),
+                length,
             );
         }
         Ok(result)
@@ -156,7 +199,9 @@ impl Allocation {
     }
 
     /// Exposes the raw const address. It must not outlive this allocation.
-    pub fn as_ptr(&self) -> *const u8 { self.pointer.as_ptr() }
+    pub fn as_ptr(&self) -> *const u8 {
+        self.pointer.as_ptr()
+    }
 }
 
 impl Drop for Allocation {
@@ -207,14 +252,23 @@ mod tests {
     fn writes_and_reads_bytes_at_offsets() {
         let mut allocation = Allocation::zeroed(8, 8).unwrap();
         allocation.write(2, &[10, 20, 30]).unwrap();
-        assert_eq!(allocation.read(0, 8).unwrap(), vec![0, 0, 10, 20, 30, 0, 0, 0]);
+        assert_eq!(
+            allocation.read(0, 8).unwrap(),
+            vec![0, 0, 10, 20, 30, 0, 0, 0]
+        );
     }
 
     #[test]
     fn rejects_ranges_beyond_allocation() {
         let mut allocation = Allocation::zeroed(4, 1).unwrap();
-        assert!(matches!(allocation.write(3, &[1, 2]), Err(AllocationError::OutOfBounds { .. })));
-        assert!(matches!(allocation.read(usize::MAX, 2), Err(AllocationError::OutOfBounds { .. })));
+        assert!(matches!(
+            allocation.write(3, &[1, 2]),
+            Err(AllocationError::OutOfBounds { .. })
+        ));
+        assert!(matches!(
+            allocation.read(usize::MAX, 2),
+            Err(AllocationError::OutOfBounds { .. })
+        ));
     }
 
     #[test]
@@ -227,7 +281,13 @@ mod tests {
 
     #[test]
     fn rejects_invalid_alignment() {
-        assert!(matches!(Allocation::zeroed(8, 3), Err(AllocationError::InvalidLayout { .. })));
-        assert!(matches!(Allocation::zeroed(8, 0), Err(AllocationError::InvalidLayout { .. })));
+        assert!(matches!(
+            Allocation::zeroed(8, 3),
+            Err(AllocationError::InvalidLayout { .. })
+        ));
+        assert!(matches!(
+            Allocation::zeroed(8, 0),
+            Err(AllocationError::InvalidLayout { .. })
+        ));
     }
 }
