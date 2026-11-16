@@ -254,6 +254,9 @@ impl Analyzer {
                 Some(SymbolKind::Function) => {
                     self.error(format!("cannot assign to function '{name}'"), *span);
                 }
+                Some(SymbolKind::Struct) => {
+                    self.error(format!("cannot assign to structure type '{name}'"), *span);
+                }
             },
             Expr::Member { object, .. } => self.expression(object),
             Expr::Index { object, index, .. } => {
@@ -318,8 +321,14 @@ impl Analyzer {
                     if name != "print" && self.lookup(name).is_none() {
                         self.error(format!("call to undefined function '{name}'"), *span);
                     }
-                    if matches!(self.lookup(name), Some(SymbolKind::Variable { .. })) {
-                        self.error(format!("'{name}' is a variable, not a function"), *span);
+                    match self.lookup(name) {
+                        Some(SymbolKind::Variable { .. }) => {
+                            self.error(format!("'{name}' is a variable, not a function"), *span);
+                        }
+                        Some(SymbolKind::Struct) => {
+                            self.error(format!("'{name}' is a structure type, not a function"), *span);
+                        }
+                        _ => {}
                     }
                 } else {
                     self.expression(callee);
