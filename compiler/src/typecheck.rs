@@ -581,7 +581,35 @@ impl Checker {
                     span: target_span,
                 } = target
                 {
-                    let target_type = self.expression(target);
+                    let object_type = self.expression(object);
+                    let target_type = match object_type {
+                        Type::Struct(id) => self
+                            .structures
+                            .values()
+                            .find(|definition| definition.id == id)
+                            .and_then(|definition| {
+                                definition
+                                    .fields
+                                    .iter()
+                                    .find(|(name, _)| name == field_name)
+                                    .map(|(_, ty)| *ty)
+                            })
+                            .unwrap_or_else(|| {
+                                self.error(
+                                    format!("structure has no field '{field_name}'"),
+                                    *target_span,
+                                );
+                                Type::Unknown
+                            }),
+                        Type::Unknown => Type::Unknown,
+                        other => {
+                            self.error(
+                                format!("field assignment requires a structure, found {other}"),
+                                *target_span,
+                            );
+                            Type::Unknown
+                        }
+                    };
                     self.expect_type(actual, target_type, *span, "field assignment type mismatch");
 
                     if let Expr::Identifier {
@@ -1220,6 +1248,20 @@ function main():
             .unwrap_err()
             .iter()
             .any(|error| error.message.contains("field assignment type mismatch")));
+    }
+
+    #[test]
+    fn assigning_a_string_field_reinitializes_a_moved_field() {
+        let source = "struct Person:
+    name: String
+function main():
+    mut person = Person { name: \"Ada\" }
+    let previous_name = person.name
+    person.name = \"Grace\"
+    print(person.name)
+    return
+";
+        assert!(checked(source).is_ok());
     }
 
     #[test]
