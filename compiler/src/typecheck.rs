@@ -1190,6 +1190,61 @@ function main():
     }
 
     #[test]
+    fn string_field_moves_are_merged_across_if_branches() {
+        let source = "struct Person:
+    name: String
+function consume(value: String):
+    return
+function main(flag: Bool):
+    let person = Person { name: \"Ada\" }
+    if flag:
+        consume(person.name)
+    print(person.name)
+    return
+";
+        let errors = checked(source).unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("use of moved value")));
+    }
+
+    #[test]
+    fn string_field_moves_inside_loops_are_conservatively_carried_out() {
+        let source = "struct Person:
+    name: String
+function consume(value: String):
+    return
+function main(flag: Bool):
+    let person = Person { name: \"Ada\" }
+    while flag:
+        consume(person.name)
+    print(person.name)
+    return
+";
+        let errors = checked(source).unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("use of moved value")));
+    }
+
+    #[test]
+    fn a_returning_branch_does_not_poison_the_live_string_field_path() {
+        let source = "struct Person:
+    name: String
+function consume(value: String):
+    return
+function main(flag: Bool):
+    let person = Person { name: \"Ada\" }
+    if flag:
+        consume(person.name)
+        return
+    print(person.name)
+    return
+";
+        assert!(checked(source).is_ok());
+    }
+
+    #[test]
     fn assigning_a_new_string_reinitializes_a_moved_binding() {
         let source = "function main():\n    mut text: String = \"first\"\n    let moved: String = text\n    text = \"second\"\n    print(text)\n    return\n";
         assert!(checked(source).is_ok());
