@@ -265,16 +265,25 @@ impl Checker {
         self.error(error.to_string(), span);
     }
 
+    fn place_for_expression(&self, expression: &Expr) -> Option<Place> {
+        match expression {
+            Expr::Identifier { name, .. } => self
+                .lookup(name)
+                .map(|variable| Place::new(variable.ownership_id.to_string())),
+            Expr::Member { object, name, .. } => self
+                .place_for_expression(object)
+                .map(|place| place.field(name.clone())),
+            _ => None,
+        }
+    }
+
     fn consume_if_owned(&mut self, expression: &Expr, ty: Type) {
         if ty != Type::String {
             return;
         }
-        if let Expr::Identifier { name, span } = expression {
-            if let Some(variable) = self.lookup(name) {
-                let place = Place::new(variable.ownership_id.to_string());
-                if let Err(error) = self.ownership.move_out(place) {
-                    self.ownership_error(error, *span);
-                }
+        if let Some(place) = self.place_for_expression(expression) {
+            if let Err(error) = self.ownership.move_out(place) {
+                self.ownership_error(error, expr_span(expression));
             }
         }
     }
@@ -806,31 +815,44 @@ impl Checker {
                     Type::Unknown
                 }
             }
-            Expr::Member { object, name, span } => match self.expression(object) {
-                Type::Struct(id) => self
-                    .structures
-                    .values()
-                    .find(|definition| definition.id == id)
-                    .and_then(|definition| {
-                        definition
-                            .fields
-                            .iter()
-                            .find(|(field_name, _)| field_name == name)
-                            .map(|(_, ty)| *ty)
-                    })
-                    .unwrap_or_else(|| {
-                        self.error(format!("structure has no field '{name}'"), *span);
+            Expr::Member { object, name, span } => {
+                let object_type = self.expression(object);
+                match object_type {
+                    Type::Struct(id) => {
+                        let field_type = self
+                            .structures
+                            .values()
+                            .find(|definition| definition.id == id)
+                            .and_then(|definition| {
+                                definition
+                                    .fields
+                                    .iter()
+                                    .find(|(field_name, _)| field_name == name)
+                                    .map(|(_, ty)| *ty)
+                            })
+                            .unwrap_or_else(|| {
+                                self.error(format!("structure has no field '{name}'"), *span);
+                                Type::Unknown
+                            });
+                        if field_type == Type::String {
+                            if let Some(place) = self.place_for_expression(expression) {
+                                if let Err(error) = self.ownership.read(&place) {
+                                    self.ownership_error(error, *span);
+                                }
+                            }
+                        }
+                        field_type
+                    }
+                    Type::Unknown => Type::Unknown,
+                    other => {
+                        self.error(
+                            format!("member access requires a structure, found {other}"),
+                            *span,
+                        );
                         Type::Unknown
-                    }),
-                Type::Unknown => Type::Unknown,
-                other => {
-                    self.error(
-                        format!("member access requires a structure, found {other}"),
-                        *span,
-                    );
-                    Type::Unknown
+                    }
                 }
-            },
+            }
             Expr::Index {
                 object,
                 index,
@@ -1097,6 +1119,38 @@ mod tests {
     #[test]
     fn printing_a_string_borrows_it_without_consuming_it() {
         let source = "function main():\n    let text: String = \"hello\"\n    print(text)\n    print(text)\n    return\n";
+        assert!(checked(source).is_ok());
+    }
+
+    #[test]
+    fn moving_a_string_field_rejects_later_field_reads() {
+        let source = "struct Person:
+    name: String
+    age: Int
+function consume(value: String):
+    return
+function main():
+    let person = Person { name: \"Ada\", age: 37 }
+    consume(person.name)
+    print(person.name)
+    return
+";
+        let errors = checked(source).unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("use of moved value")));
+    }
+
+    #[test]
+    fn reading_a_string_field_does_not_consume_it() {
+        let source = "struct Person:
+    name: String
+function main():
+    let person = Person { name: \"Ada\" }
+    print(person.name)
+    print(person.name)
+    return
+";
         assert!(checked(source).is_ok());
     }
 
