@@ -1275,11 +1275,29 @@ function main():
     fn moving_and_reinitializing_a_nested_string_field_tracks_its_full_place() {
         let source = "struct Contact:
     email: String
+struct Person:
+    contact: Contact
 function main():
-    mut contact = Contact { email: \"old@example.test\" }
-    let previous = contact.email
-    contact.email = \"new@example.test\"
-    print(contact.email)
+    mut person = Person { contact: Contact { email: \"old@example.test\" } }
+    let previous = person.contact.email
+    person.contact.email = \"new@example.test\"
+    print(person.contact.email)
+    return
+";
+        assert!(checked(source).is_ok());
+    }
+
+    #[test]
+    fn moving_one_string_field_does_not_move_a_sibling_field() {
+        let source = "struct Person:
+    name: String
+    nickname: String
+function consume(value: String):
+    return
+function main():
+    let person = Person { name: \"Ada\", nickname: \"Countess\" }
+    consume(person.name)
+    print(person.nickname)
     return
 ";
         assert!(checked(source).is_ok());
