@@ -1,7 +1,10 @@
+pub mod layout;
 mod lexer;
 mod llvm;
 mod mir;
+pub mod ownership;
 mod parser;
+pub mod runtime;
 mod semantic;
 mod typecheck;
 

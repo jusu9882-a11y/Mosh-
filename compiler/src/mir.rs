@@ -865,6 +865,9 @@ pub fn lower(program: &Program) -> Result<MirModule, Vec<LowerError>> {
     let mut top_level = Vec::new();
 
     for statement in &program.statements {
+        if let Stmt::Struct { .. } = statement {
+            continue;
+        }
         if let Stmt::Function {
             name,
             params,
@@ -1039,6 +1042,10 @@ impl Builder {
     }
     fn statement(&mut self, statement: &Stmt, current: BlockId) -> BlockId {
         match statement {
+            Stmt::Struct { span, .. } => {
+                self.error("nested structure declarations are not supported", *span);
+                current
+            }
             Stmt::Let {
                 name,
                 mutable,
@@ -1207,6 +1214,13 @@ impl Builder {
                 *span,
                 true,
             ),
+            Expr::StructLiteral { name, span, .. } => {
+                self.error(
+                    format!("structure value '{name}' is not yet supported by MIR lowering"),
+                    *span,
+                );
+                None
+            }
             Expr::Unary {
                 operator,
                 operand,

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::lexer::{Span, TokenKind};
+use crate::ownership::{OwnershipState, Place};
 use crate::parser::{Expr, Program, Stmt, TypeExpr};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -11,6 +12,7 @@ enum Type {
     Bool,
     String,
     Unit,
+    Struct(u32),
     Unknown,
 }
 
@@ -35,6 +37,7 @@ impl fmt::Display for Type {
             Self::Bool => "Bool",
             Self::String => "String",
             Self::Unit => "Unit",
+            Self::Struct(id) => return write!(f, "structure#{id}"),
             Self::Unknown => "an unknown type",
         })
     }
@@ -58,6 +61,12 @@ impl fmt::Display for TypeError {
 impl std::error::Error for TypeError {}
 
 #[derive(Debug, Clone)]
+struct StructType {
+    id: u32,
+    fields: Vec<(String, Type)>,
+}
+
+#[derive(Debug, Clone)]
 struct FunctionType {
     parameters: Vec<Type>,
     result: Type,
@@ -68,6 +77,7 @@ struct Variable {
     ty: Type,
     mutable: bool,
     initialized: bool,
+    ownership_id: u64,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -79,16 +89,51 @@ struct Scope {
 struct Checker {
     scopes: Vec<Scope>,
     functions: HashMap<String, FunctionType>,
+    structures: HashMap<String, StructType>,
     errors: Vec<TypeError>,
     return_types: Vec<Type>,
+    ownership: OwnershipState,
+    next_binding_id: u64,
 }
 
 pub fn check(program: &Program) -> Result<(), Vec<TypeError>> {
     let mut checker = Checker::default();
     checker.push_scope();
 
-    // Function signatures are collected first, matching module-level
-    // forward-reference and mutual-recursion name resolution.
+    // Register structure names first so field types may refer to declarations
+    // appearing later in the source file.
+    let mut next_structure_id = 0u32;
+    for statement in &program.statements {
+        if let Stmt::Struct { name, .. } = statement {
+            checker.structures.entry(name.clone()).or_insert_with(|| {
+                let id = next_structure_id;
+                next_structure_id += 1;
+                StructType {
+                    id,
+                    fields: Vec::new(),
+                }
+            });
+        }
+    }
+
+    // Resolve structure fields after every structure name is known.
+    for statement in &program.statements {
+        if let Stmt::Struct { name, fields, .. } = statement {
+            let resolved = fields
+                .iter()
+                .filter_map(|field| {
+                    checker
+                        .resolve_type(&field.ty)
+                        .map(|ty| (field.name.clone(), ty))
+                })
+                .collect::<Vec<_>>();
+            if let Some(definition) = checker.structures.get_mut(name) {
+                definition.fields = resolved;
+            }
+        }
+    }
+
+    // Function signatures are collected after structure names and fields.
     for statement in &program.statements {
         if let Stmt::Function {
             name,
@@ -132,7 +177,7 @@ pub fn check(program: &Program) -> Result<(), Vec<TypeError>> {
     }
 
     for statement in &program.statements {
-        if !matches!(statement, Stmt::Function { .. }) {
+        if !matches!(statement, Stmt::Function { .. } | Stmt::Struct { .. }) {
             checker.error(
                 "module-level executable statements and global bindings are not supported",
                 statement_span(statement),
@@ -164,19 +209,16 @@ impl Checker {
     }
 
     fn resolve_type(&mut self, syntax: &TypeExpr) -> Option<Type> {
-        match Type::from_name(&syntax.name) {
-            Some(ty) => Some(ty),
-            None => {
-                self.error(
-                    format!(
-                        "unknown type '{}'; expected Int, Float, Bool, String, or Unit",
-                        syntax.name
-                    ),
-                    syntax.span,
-                );
+        Type::from_name(&syntax.name)
+            .or_else(|| {
+                self.structures
+                    .get(&syntax.name)
+                    .map(|definition| Type::Struct(definition.id))
+            })
+            .or_else(|| {
+                self.error(format!("unknown type '{}'", syntax.name), syntax.span);
                 None
-            }
-        }
+            })
     }
 
     fn resolve_parameter_type(&mut self, syntax: &TypeExpr) -> Option<Type> {
@@ -196,7 +238,7 @@ impl Checker {
             .find_map(|scope| scope.variables.get(name).copied())
     }
 
-    fn define(&mut self, name: &str, variable: Variable, span: Span) {
+    fn define(&mut self, name: &str, mut variable: Variable, span: Span) {
         let duplicate = self
             .scopes
             .last()
@@ -206,11 +248,51 @@ impl Checker {
         if duplicate {
             self.error(format!("duplicate typed binding '{name}'"), span);
         } else {
+            variable.ownership_id = self.next_binding_id;
+            self.next_binding_id = self
+                .next_binding_id
+                .checked_add(1)
+                .expect("binding ID space exhausted");
             self.scopes
                 .last_mut()
                 .expect("checker always has a scope")
                 .variables
                 .insert(name.to_owned(), variable);
+        }
+    }
+
+    fn ownership_error(&mut self, error: impl fmt::Display, span: Span) {
+        self.error(error.to_string(), span);
+    }
+
+    fn root_identifier(expression: &Expr) -> Option<(&str, Span)> {
+        match expression {
+            Expr::Identifier { name, span } => Some((name, *span)),
+            Expr::Member { object, .. } => Self::root_identifier(object),
+            _ => None,
+        }
+    }
+
+    fn place_for_expression(&self, expression: &Expr) -> Option<Place> {
+        match expression {
+            Expr::Identifier { name, .. } => self
+                .lookup(name)
+                .map(|variable| Place::new(variable.ownership_id.to_string())),
+            Expr::Member { object, name, .. } => self
+                .place_for_expression(object)
+                .map(|place| place.field(name.clone())),
+            _ => None,
+        }
+    }
+
+    fn consume_if_owned(&mut self, expression: &Expr, ty: Type) {
+        if ty != Type::String {
+            return;
+        }
+        if let Some(place) = self.place_for_expression(expression) {
+            if let Err(error) = self.ownership.move_out(place) {
+                self.ownership_error(error, expr_span(expression));
+            }
         }
     }
 
@@ -225,6 +307,7 @@ impl Checker {
 
     fn statement(&mut self, statement: &Stmt) {
         match statement {
+            Stmt::Struct { .. } => {}
             Stmt::Function {
                 name,
                 params,
@@ -242,6 +325,7 @@ impl Checker {
                     .unwrap_or(Type::Unit);
                 let signature = self.functions.get(name).cloned();
                 self.push_scope();
+                self.ownership = OwnershipState::new();
                 self.return_types.push(result);
                 for (index, parameter) in params.iter().enumerate() {
                     if let Some(ty) = self.resolve_type(&parameter.ty) {
@@ -265,6 +349,7 @@ impl Checker {
                                 ty,
                                 mutable: false,
                                 initialized: true,
+                                ownership_id: 0,
                             },
                             parameter.span,
                         );
@@ -281,6 +366,7 @@ impl Checker {
                 }
                 self.return_types.pop();
                 self.pop_scope();
+                self.ownership = OwnershipState::new();
                 let _ = span;
             }
             Stmt::Let {
@@ -292,6 +378,9 @@ impl Checker {
             } => {
                 let annotation = ty.as_ref().and_then(|syntax| self.resolve_type(syntax));
                 let inferred = value.as_ref().map(|expr| self.expression(expr));
+                if let (Some(expression), Some(actual)) = (value.as_ref(), inferred) {
+                    self.consume_if_owned(expression, actual);
+                }
                 let final_type = match (annotation, inferred) {
                     (Some(expected), Some(actual)) => {
                         self.expect_type(
@@ -315,6 +404,7 @@ impl Checker {
                         ty: final_type,
                         mutable: *mutable,
                         initialized: value.is_some(),
+                        ownership_id: 0,
                     },
                     *span,
                 );
@@ -326,6 +416,9 @@ impl Checker {
                     .unwrap_or(Type::Unit);
                 if let Some(expected) = self.return_types.last().copied() {
                     self.expect_type(actual, expected, *span, "return type mismatch");
+                    if let Some(expression) = value.as_ref() {
+                        self.consume_if_owned(expression, actual);
+                    }
                     if expected == Type::Unit && value.is_some() && actual == Type::Unit {
                         self.error("a Unit function must use a bare return", *span);
                     }
@@ -345,17 +438,26 @@ impl Checker {
                     "if condition must be Bool",
                 );
                 let before = self.scopes.clone();
+                let ownership_before = self.ownership.clone();
                 self.block(then_body);
                 let after_then = self.scopes.clone();
+                let ownership_after_then = self.ownership.clone();
                 self.scopes = before.clone();
+                self.ownership = ownership_before.clone();
                 if let Some(body) = else_body {
                     self.block(body);
                 }
                 let after_else = self.scopes.clone();
+                let ownership_after_else = self.ownership.clone();
                 let then_returns = block_guarantees_return(then_body);
                 let else_returns = else_body
                     .as_ref()
                     .is_some_and(|body| block_guarantees_return(body));
+                self.ownership = match (then_returns, else_returns, else_body.is_some()) {
+                    (true, _, false) | (true, false, true) => ownership_after_else,
+                    (false, true, true) => ownership_after_then,
+                    _ => OwnershipState::join(&[&ownership_after_then, &ownership_after_else]),
+                };
                 for (scope_index, scope) in self.scopes.iter_mut().enumerate() {
                     for (name, variable) in &mut scope.variables {
                         let then_initialized = after_then
@@ -398,9 +500,16 @@ impl Checker {
                     "while condition must be Bool",
                 );
                 let before = self.scopes.clone();
+                let ownership_before = self.ownership.clone();
                 self.block(body);
-                // A while-loop may execute zero times, so assignments made only
-                // inside its body are not definitely initialized afterwards.
+                let ownership_after_body = self.ownership.clone();
+                // A while-loop may execute zero times. Join the incoming state
+                // with the body state unless every body path returns.
+                self.ownership = if block_guarantees_return(body) {
+                    ownership_before
+                } else {
+                    OwnershipState::join(&[&ownership_before, &ownership_after_body])
+                };
                 self.scopes = before;
             }
             Stmt::For {
@@ -425,6 +534,7 @@ impl Checker {
                         ty: Type::Unknown,
                         mutable: false,
                         initialized: true,
+                        ownership_id: 0,
                     },
                     *span,
                 );
@@ -456,6 +566,13 @@ impl Checker {
                         }
                         self.expect_type(actual, variable.ty, *span, "assignment type mismatch");
                         if variable.mutable && actual != Type::Unknown {
+                            self.consume_if_owned(value, actual);
+                            if actual == Type::String {
+                                let place = Place::new(variable.ownership_id.to_string());
+                                if let Err(error) = self.ownership.assign(place) {
+                                    self.ownership_error(error, *span);
+                                }
+                            }
                             if let Some(binding) = self
                                 .scopes
                                 .iter_mut()
@@ -466,8 +583,75 @@ impl Checker {
                             }
                         }
                     }
+                } else if let Expr::Member {
+                    object,
+                    name: field_name,
+                    span: target_span,
+                } = target
+                {
+                    let object_type = self.expression(object);
+                    let target_type = match object_type {
+                        Type::Struct(id) => self
+                            .structures
+                            .values()
+                            .find(|definition| definition.id == id)
+                            .and_then(|definition| {
+                                definition
+                                    .fields
+                                    .iter()
+                                    .find(|(name, _)| name == field_name)
+                                    .map(|(_, ty)| *ty)
+                            })
+                            .unwrap_or_else(|| {
+                                self.error(
+                                    format!("structure has no field '{field_name}'"),
+                                    *target_span,
+                                );
+                                Type::Unknown
+                            }),
+                        Type::Unknown => Type::Unknown,
+                        other => {
+                            self.error(
+                                format!("field assignment requires a structure, found {other}"),
+                                *target_span,
+                            );
+                            Type::Unknown
+                        }
+                    };
+                    self.expect_type(actual, target_type, *span, "field assignment type mismatch");
+
+                    if let Some((root_name, root_span)) = Self::root_identifier(object) {
+                        if let Some(variable) = self.lookup(root_name) {
+                            if !variable.mutable {
+                                self.error(
+                                    format!(
+                                        "cannot assign to field '{field_name}' of immutable binding '{root_name}'"
+                                    ),
+                                    root_span,
+                                );
+                            } else if actual != Type::Unknown && actual == target_type {
+                                self.consume_if_owned(value, actual);
+                                if actual == Type::String {
+                                    if let Some(place) = self
+                                        .place_for_expression(object)
+                                        .map(|place| place.field(field_name.clone()))
+                                    {
+                                        if let Err(error) = self.ownership.assign(place) {
+                                            self.ownership_error(error, *target_span);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        self.error(
+                            "field assignment requires a field of a named local structure value",
+                            *target_span,
+                        );
+                    }
                 } else {
-                    // Member/index assignment needs compound types and is deferred.
+                    // Index assignment remains unavailable until collection types
+                    // have been added to the typed AST and MIR.
                     let _ = self.expression(target);
                 }
             }
@@ -491,6 +675,53 @@ impl Checker {
             Expr::Float { .. } => Type::Float,
             Expr::String { .. } => Type::String,
             Expr::Boolean { .. } => Type::Bool,
+            Expr::StructLiteral { name, fields, span } => {
+                let Some(definition) = self.structures.get(name).cloned() else {
+                    for (_, value, _) in fields {
+                        self.expression(value);
+                    }
+                    self.error(format!("unknown structure type '{name}'"), *span);
+                    return Type::Unknown;
+                };
+
+                let mut provided = Vec::new();
+                for (field_name, value, field_span) in fields {
+                    let actual = self.expression(value);
+                    if provided.iter().any(|seen: &String| seen == field_name) {
+                        self.error(
+                            format!("field '{field_name}' is specified more than once"),
+                            *field_span,
+                        );
+                        continue;
+                    }
+                    provided.push(field_name.clone());
+                    match definition
+                        .fields
+                        .iter()
+                        .find(|(name, _)| name == field_name)
+                    {
+                        Some((_, expected)) => self.expect_type(
+                            actual,
+                            *expected,
+                            expr_span(value),
+                            &format!("field '{field_name}' in '{name}'"),
+                        ),
+                        None => self.error(
+                            format!("structure '{name}' has no field '{field_name}'"),
+                            *field_span,
+                        ),
+                    }
+                }
+                for (field_name, _) in &definition.fields {
+                    if !provided.contains(field_name) {
+                        self.error(
+                            format!("missing field '{field_name}' in structure literal '{name}'"),
+                            *span,
+                        );
+                    }
+                }
+                Type::Struct(definition.id)
+            }
             Expr::Identifier { name, span } => match self.lookup(name) {
                 Some(variable) => {
                     if !variable.initialized {
@@ -498,6 +729,12 @@ impl Checker {
                             format!("binding '{name}' may be used before it is initialized"),
                             *span,
                         );
+                    }
+                    if variable.ty == Type::String {
+                        let place = Place::new(variable.ownership_id.to_string());
+                        if let Err(error) = self.ownership.read(&place) {
+                            self.ownership_error(error, *span);
+                        }
                     }
                     variable.ty
                 }
@@ -585,6 +822,9 @@ impl Checker {
                                     expr_span(argument),
                                     &format!("argument {} to '{name}'", index + 1),
                                 );
+                                if expected == Type::String && actual == Type::String {
+                                    self.consume_if_owned(argument, actual);
+                                }
                             }
                         }
                         signature.result
@@ -610,10 +850,43 @@ impl Checker {
                     Type::Unknown
                 }
             }
-            Expr::Member { object, span, .. } => {
-                self.expression(object);
-                self.error("member access requires compound types, which are not in the initial type checker", *span);
-                Type::Unknown
+            Expr::Member { object, name, span } => {
+                let object_type = self.expression(object);
+                match object_type {
+                    Type::Struct(id) => {
+                        let field_type = self
+                            .structures
+                            .values()
+                            .find(|definition| definition.id == id)
+                            .and_then(|definition| {
+                                definition
+                                    .fields
+                                    .iter()
+                                    .find(|(field_name, _)| field_name == name)
+                                    .map(|(_, ty)| *ty)
+                            })
+                            .unwrap_or_else(|| {
+                                self.error(format!("structure has no field '{name}'"), *span);
+                                Type::Unknown
+                            });
+                        if field_type == Type::String {
+                            if let Some(place) = self.place_for_expression(expression) {
+                                if let Err(error) = self.ownership.read(&place) {
+                                    self.ownership_error(error, *span);
+                                }
+                            }
+                        }
+                        field_type
+                    }
+                    Type::Unknown => Type::Unknown,
+                    other => {
+                        self.error(
+                            format!("member access requires a structure, found {other}"),
+                            *span,
+                        );
+                        Type::Unknown
+                    }
+                }
             }
             Expr::Index {
                 object,
@@ -718,7 +991,8 @@ fn statement_guarantees_return(statement: &Stmt) -> bool {
 
 fn statement_span(statement: &Stmt) -> Span {
     match statement {
-        Stmt::Function { span, .. }
+        Stmt::Struct { span, .. }
+        | Stmt::Function { span, .. }
         | Stmt::Let { span, .. }
         | Stmt::Return { span, .. }
         | Stmt::If { span, .. }
@@ -732,6 +1006,7 @@ fn statement_span(statement: &Stmt) -> Span {
 fn expr_span(expression: &Expr) -> Span {
     match expression {
         Expr::Identifier { span, .. }
+        | Expr::StructLiteral { span, .. }
         | Expr::Integer { span, .. }
         | Expr::Float { span, .. }
         | Expr::String { span, .. }
@@ -755,6 +1030,52 @@ mod tests {
         let program = parse(&tokens).expect("source should parse");
         crate::semantic::analyze(&program).expect("source should pass name resolution");
         check(&program)
+    }
+
+    #[test]
+    fn accepts_module_scope_struct_declarations_with_primitive_fields() {
+        assert!(checked(
+            "struct Point:\n    x: Float\n    y: Float\nfunction main():\n    return\n"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn rejects_unknown_struct_field_types() {
+        let errors = checked("struct Point:\n    x: MissingType\nfunction main():\n    return\n")
+            .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("unknown type 'MissingType'")));
+    }
+
+    #[test]
+    fn checks_struct_construction_and_member_access_types() {
+        assert!(checked(
+            "struct Point:\n    x: Int\n    y: Float\nfunction main():\n    let point = Point { x: 1, y: 2.5 }\n    print(point.x)\n    print(point.y)\n    return\n"
+        ).is_ok());
+    }
+
+    #[test]
+    fn rejects_struct_literal_field_type_mismatches() {
+        let errors = checked(
+            "struct Point:\n    x: Int\nfunction main():\n    let point = Point { x: 2.5 }\n    return\n",
+        )
+        .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("field 'x' in 'Point'")));
+    }
+
+    #[test]
+    fn rejects_unknown_struct_members() {
+        let errors = checked(
+            "struct Point:\n    x: Int\nfunction main():\n    let point = Point { x: 1 }\n    print(point.z)\n    return\n",
+        )
+        .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("structure has no field 'z'")));
     }
 
     #[test]
@@ -813,6 +1134,147 @@ mod tests {
     }
 
     #[test]
+    fn moving_a_string_binding_rejects_later_use() {
+        let source = "function main():\n    let first: String = \"one\"\n    let second: String = first\n    print(first)\n    return\n";
+        let errors = checked(source).unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("use of moved value")));
+    }
+
+    #[test]
+    fn passing_a_string_to_a_function_moves_the_argument() {
+        let source = "function consume(value: String):\n    return\nfunction main():\n    let text: String = \"owned\"\n    consume(text)\n    print(text)\n    return\n";
+        let errors = checked(source).unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("use of moved value")));
+    }
+
+    #[test]
+    fn printing_a_string_borrows_it_without_consuming_it() {
+        let source = "function main():\n    let text: String = \"hello\"\n    print(text)\n    print(text)\n    return\n";
+        assert!(checked(source).is_ok());
+    }
+
+    #[test]
+    fn moving_a_string_field_rejects_later_field_reads() {
+        let source = "struct Person:
+    name: String
+    age: Int
+function consume(value: String):
+    return
+function main():
+    let person = Person { name: \"Ada\", age: 37 }
+    consume(person.name)
+    print(person.name)
+    return
+";
+        let errors = checked(source).unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("use of moved value")));
+    }
+
+    #[test]
+    fn reading_a_string_field_does_not_consume_it() {
+        let source = "struct Person:
+    name: String
+function main():
+    let person = Person { name: \"Ada\" }
+    print(person.name)
+    print(person.name)
+    return
+";
+        assert!(checked(source).is_ok());
+    }
+
+    #[test]
+    fn string_field_moves_are_merged_across_if_branches() {
+        let source = "struct Person:
+    name: String
+function consume(value: String):
+    return
+function main(flag: Bool):
+    let person = Person { name: \"Ada\" }
+    if flag:
+        consume(person.name)
+    print(person.name)
+    return
+";
+        let errors = checked(source).unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("use of moved value")));
+    }
+
+    #[test]
+    fn string_field_moves_inside_loops_are_conservatively_carried_out() {
+        let source = "struct Person:
+    name: String
+function consume(value: String):
+    return
+function main(flag: Bool):
+    let person = Person { name: \"Ada\" }
+    while flag:
+        consume(person.name)
+    print(person.name)
+    return
+";
+        let errors = checked(source).unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("use of moved value")));
+    }
+
+    #[test]
+    fn a_returning_branch_does_not_poison_the_live_string_field_path() {
+        let source = "struct Person:
+    name: String
+function consume(value: String):
+    return
+function main(flag: Bool):
+    let person = Person { name: \"Ada\" }
+    if flag:
+        consume(person.name)
+        return
+    print(person.name)
+    return
+";
+        assert!(checked(source).is_ok());
+    }
+
+    #[test]
+    fn assigning_a_new_string_reinitializes_a_moved_binding() {
+        let source = "function main():\n    mut text: String = \"first\"\n    let moved: String = text\n    text = \"second\"\n    print(text)\n    return\n";
+        assert!(checked(source).is_ok());
+    }
+
+    #[test]
+    fn string_moves_are_merged_across_if_branches() {
+        let source = "function consume(value: String):\n    return\nfunction main(flag: Bool):\n    let text: String = \"branch\"\n    if flag:\n        consume(text)\n    print(text)\n    return\n";
+        let errors = checked(source).unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("use of moved value")));
+    }
+
+    #[test]
+    fn a_returning_if_branch_does_not_poison_the_continuing_string_path() {
+        let source = "function main(flag: Bool):\n    let text: String = \"still live\"\n    if flag:\n        return\n    print(text)\n    return\n";
+        assert!(checked(source).is_ok());
+    }
+
+    #[test]
+    fn string_moves_inside_loops_are_conservatively_carried_out() {
+        let source = "function consume(value: String):\n    return\nfunction main(flag: Bool):\n    let text: String = \"loop\"\n    while flag:\n        consume(text)\n    print(text)\n    return\n";
+        let errors = checked(source).unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("use of moved value")));
+    }
+
+    #[test]
     fn rejects_for_loops_until_iteration_is_implemented() {
         let errors =
             checked("function main():\n    for item in 1:\n        print(item)\n").unwrap_err();
@@ -837,6 +1299,71 @@ mod tests {
             .unwrap_err()
             .iter()
             .any(|error| error.message.contains("before it is initialized")));
+    }
+
+    #[test]
+    fn checks_mutable_structure_field_assignment_types() {
+        let source = "struct Point:\n    x: Int\n    y: Int\nfunction main():\n    mut point = Point { x: 1, y: 2 }\n    point.x = 3\n    return\n";
+        assert!(checked(source).is_ok());
+        let mismatch = "struct Point:\n    x: Int\nfunction main():\n    mut point = Point { x: 1 }\n    point.x = \"wrong\"\n    return\n";
+        assert!(checked(mismatch)
+            .unwrap_err()
+            .iter()
+            .any(|error| error.message.contains("field assignment type mismatch")));
+    }
+
+    #[test]
+    fn assigning_a_string_field_reinitializes_a_moved_field() {
+        let source = "struct Person:
+    name: String
+function main():
+    mut person = Person { name: \"Ada\" }
+    let previous_name = person.name
+    person.name = \"Grace\"
+    print(person.name)
+    return
+";
+        assert!(checked(source).is_ok());
+    }
+
+    #[test]
+    fn moving_and_reinitializing_a_nested_string_field_tracks_its_full_place() {
+        let source = "struct Contact:
+    email: String
+struct Person:
+    contact: Contact
+function main():
+    mut person = Person { contact: Contact { email: \"old@example.test\" } }
+    let previous = person.contact.email
+    person.contact.email = \"new@example.test\"
+    print(person.contact.email)
+    return
+";
+        assert!(checked(source).is_ok());
+    }
+
+    #[test]
+    fn moving_one_string_field_does_not_move_a_sibling_field() {
+        let source = "struct Person:
+    name: String
+    nickname: String
+function consume(value: String):
+    return
+function main():
+    let person = Person { name: \"Ada\", nickname: \"Countess\" }
+    consume(person.name)
+    print(person.nickname)
+    return
+";
+        assert!(checked(source).is_ok());
+    }
+
+    #[test]
+    fn rejects_assignment_to_field_of_immutable_structure_binding() {
+        let source = "struct Point:\n    x: Int\nfunction main():\n    let point = Point { x: 1 }\n    point.x = 3\n    return\n";
+        assert!(checked(source).unwrap_err().iter().any(|error| error
+            .message
+            .contains("field 'x' of immutable binding 'point'")));
     }
 
     #[test]

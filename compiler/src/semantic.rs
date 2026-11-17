@@ -26,6 +26,7 @@ impl std::error::Error for SemanticError {}
 enum SymbolKind {
     Variable { mutable: bool },
     Function,
+    Struct,
 }
 
 #[derive(Debug, Default)]
@@ -49,19 +50,40 @@ struct Analyzer {
     scopes: Vec<Scope>,
     errors: Vec<SemanticError>,
     function_depth: usize,
+    structures: HashMap<String, Vec<String>>,
 }
 
 pub fn analyze(program: &Program) -> Result<(), Vec<SemanticError>> {
     let mut analyzer = Analyzer::default();
     analyzer.push_scope();
 
-    // Register module-level functions before checking bodies. This makes
-    // declaration order irrelevant for functions and permits mutual recursion.
+    // Register module-level declarations before checking bodies, so structure
+    // literals and function calls are independent of declaration order.
     for statement in &program.statements {
-        if let Stmt::Function { name, span, .. } = statement {
-            if !analyzer.define(name, SymbolKind::Function) {
-                analyzer.error(format!("duplicate declaration of '{name}'"), *span);
+        match statement {
+            Stmt::Function { name, span, .. } => {
+                if !analyzer.define(name, SymbolKind::Function) {
+                    analyzer.error(format!("duplicate declaration of '{name}'"), *span);
+                }
             }
+            Stmt::Struct { name, fields, span } => {
+                if !analyzer.define(name, SymbolKind::Struct) {
+                    analyzer.error(format!("duplicate declaration of '{name}'"), *span);
+                }
+                let mut names = Vec::new();
+                for field in fields {
+                    if names.contains(&field.name) {
+                        analyzer.error(
+                            format!("duplicate field '{}' in structure '{name}'", field.name),
+                            field.span,
+                        );
+                    } else {
+                        names.push(field.name.clone());
+                    }
+                }
+                analyzer.structures.insert(name.clone(), names);
+            }
+            _ => {}
         }
     }
 
@@ -108,6 +130,14 @@ impl Analyzer {
 
     fn statement(&mut self, statement: &Stmt) {
         match statement {
+            Stmt::Struct { span, .. } => {
+                if self.function_depth > 0 {
+                    self.error(
+                        "structure declarations are only allowed at module scope",
+                        *span,
+                    );
+                }
+            }
             Stmt::Function {
                 name,
                 params,
@@ -227,6 +257,9 @@ impl Analyzer {
                 Some(SymbolKind::Function) => {
                     self.error(format!("cannot assign to function '{name}'"), *span);
                 }
+                Some(SymbolKind::Struct) => {
+                    self.error(format!("cannot assign to structure type '{name}'"), *span);
+                }
             },
             Expr::Member { object, .. } => self.expression(object),
             Expr::Index { object, index, .. } => {
@@ -247,6 +280,37 @@ impl Analyzer {
                     self.error(format!("use of undefined name '{name}'"), *span);
                 }
             }
+            Expr::StructLiteral { name, fields, span } => {
+                match self.structures.get(name).cloned() {
+                    None => self.error(format!("unknown structure type '{name}'"), *span),
+                    Some(declared) => {
+                        let mut provided = Vec::new();
+                        for (field_name, value, field_span) in fields {
+                            self.expression(value);
+                            if provided.contains(field_name) {
+                                self.error(
+                                    format!("field '{field_name}' is specified more than once"),
+                                    *field_span,
+                                );
+                            } else if !declared.contains(field_name) {
+                                self.error(
+                                    format!("structure '{name}' has no field '{field_name}'"),
+                                    *field_span,
+                                );
+                            }
+                            provided.push(field_name.clone());
+                        }
+                        for field_name in declared {
+                            if !provided.contains(&field_name) {
+                                self.error(
+                                    format!("missing field '{field_name}' in structure literal '{name}'"),
+                                    *span,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
             Expr::Unary { operand, .. } => self.expression(operand),
             Expr::Binary { left, right, .. } => {
                 self.expression(left);
@@ -260,8 +324,17 @@ impl Analyzer {
                     if name != "print" && self.lookup(name).is_none() {
                         self.error(format!("call to undefined function '{name}'"), *span);
                     }
-                    if matches!(self.lookup(name), Some(SymbolKind::Variable { .. })) {
-                        self.error(format!("'{name}' is a variable, not a function"), *span);
+                    match self.lookup(name) {
+                        Some(SymbolKind::Variable { .. }) => {
+                            self.error(format!("'{name}' is a variable, not a function"), *span);
+                        }
+                        Some(SymbolKind::Struct) => {
+                            self.error(
+                                format!("'{name}' is a structure type, not a function"),
+                                *span,
+                            );
+                        }
+                        _ => {}
                     }
                 } else {
                     self.expression(callee);
@@ -286,6 +359,7 @@ impl Analyzer {
 fn expr_span(expression: &Expr) -> Span {
     match expression {
         Expr::Identifier { span, .. }
+        | Expr::StructLiteral { span, .. }
         | Expr::Integer { span, .. }
         | Expr::Float { span, .. }
         | Expr::String { span, .. }
@@ -309,6 +383,39 @@ mod tests {
         let tokens = tokenize(source).expect("test source should tokenize");
         let program = parse(&tokens).expect("test source should parse");
         analyze(&program)
+    }
+
+    #[test]
+    fn validates_struct_literal_fields_and_rejects_unknown_structs() {
+        assert!(checked(
+            "struct Point:\n    x: Int\n    y: Int\nfunction main():\n    let point = Point { x: 1, y: 2 }\n    return\n"
+        ).is_ok());
+
+        let missing = checked(
+            "struct Point:\n    x: Int\n    y: Int\nfunction main():\n    let point = Point { x: 1 }\n    return\n",
+        )
+        .unwrap_err();
+        assert!(missing
+            .iter()
+            .any(|error| error.message.contains("missing field 'y'")));
+
+        let unknown = checked("function main():\n    let point = Missing { x: 1 }\n    return\n")
+            .unwrap_err();
+        assert!(unknown
+            .iter()
+            .any(|error| error.message.contains("unknown structure type 'Missing'")));
+    }
+
+    #[test]
+    fn rejects_duplicate_structure_and_field_declarations() {
+        let errors = checked("struct Point:\n    x: Int\n    x: Int\nstruct Point:\n    y: Int\n")
+            .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("duplicate field 'x'")));
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("duplicate declaration of 'Point'")));
     }
 
     #[test]

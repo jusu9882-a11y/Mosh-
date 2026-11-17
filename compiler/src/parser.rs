@@ -8,6 +8,13 @@ pub struct TypeExpr {
     pub span: Span,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StructField {
+    pub name: String,
+    pub ty: TypeExpr,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Parameter {
     pub name: String,
     pub ty: TypeExpr,
@@ -20,6 +27,11 @@ pub struct Program {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stmt {
+    Struct {
+        name: String,
+        fields: Vec<StructField>,
+        span: Span,
+    },
     Function {
         name: String,
         params: Vec<Parameter>,
@@ -70,6 +82,11 @@ pub enum Stmt {
 pub enum Expr {
     Identifier {
         name: String,
+        span: Span,
+    },
+    StructLiteral {
+        name: String,
+        fields: Vec<(String, Expr, Span)>,
         span: Span,
     },
     Integer {
@@ -240,6 +257,7 @@ impl<'a> Parser<'a> {
 
     fn statement(&mut self) -> Result<Stmt, ParseError> {
         match self.kind() {
+            TokenKind::Struct => self.structure(),
             TokenKind::Function => self.function(),
             TokenKind::Let | TokenKind::Mut => self.binding(false),
             TokenKind::Return => self.return_stmt(),
@@ -251,6 +269,45 @@ impl<'a> Parser<'a> {
             }
             _ => self.assignment_or_expr(),
         }
+    }
+
+    fn structure(&mut self) -> Result<Stmt, ParseError> {
+        let start = self.expect(TokenKind::Struct, "expected 'struct'")?.span;
+        let name = self.identifier("expected structure name")?;
+        self.expect(TokenKind::Colon, "expected ':' after structure name")?;
+        self.expect(
+            TokenKind::Newline,
+            "expected newline after structure header",
+        )?;
+        self.skip_newlines();
+        self.expect(TokenKind::Indent, "expected an indented structure body")?;
+
+        let mut fields = Vec::new();
+        self.skip_newlines();
+        while !self.check(&TokenKind::Dedent) && !self.check(&TokenKind::Eof) {
+            let field_start = self.peek().span;
+            let field_name = self.identifier("expected structure field name")?;
+            self.expect(TokenKind::Colon, "expected ':' after structure field name")?;
+            let ty = self.type_expr()?;
+            fields.push(StructField {
+                name: field_name,
+                span: join(field_start, ty.span),
+                ty,
+            });
+            if let Err(error) = self.statement_end() {
+                self.errors.push(error);
+                self.synchronize_statement();
+            }
+            self.skip_newlines();
+        }
+        let end = self
+            .expect(TokenKind::Dedent, "expected end of structure body")?
+            .span;
+        Ok(Stmt::Struct {
+            name,
+            fields,
+            span: join(start, end),
+        })
     }
 
     fn function(&mut self) -> Result<Stmt, ParseError> {
@@ -521,10 +578,47 @@ impl<'a> Parser<'a> {
     fn prefix(&mut self) -> Result<Expr, ParseError> {
         let token = self.advance().clone();
         match token.kind {
-            TokenKind::Identifier => Ok(Expr::Identifier {
-                name: token.lexeme,
-                span: token.span,
-            }),
+            TokenKind::Identifier => {
+                if self.take(&TokenKind::LeftBrace) {
+                    let mut fields = Vec::new();
+                    if !self.check(&TokenKind::RightBrace) {
+                        loop {
+                            let field_start = self.peek().span;
+                            let field_name =
+                                self.identifier("expected field name in structure literal")?;
+                            self.expect(
+                                TokenKind::Colon,
+                                "expected ':' after structure literal field",
+                            )?;
+                            let value = self.expression(0)?;
+                            let field_span = join(field_start, expr_span(&value));
+                            fields.push((field_name, value, field_span));
+                            if !self.take(&TokenKind::Comma) {
+                                break;
+                            }
+                            if self.check(&TokenKind::RightBrace) {
+                                break;
+                            }
+                        }
+                    }
+                    let close = self
+                        .expect(
+                            TokenKind::RightBrace,
+                            "expected '}' after structure literal",
+                        )?
+                        .span;
+                    Ok(Expr::StructLiteral {
+                        name: token.lexeme,
+                        fields,
+                        span: join(token.span, close),
+                    })
+                } else {
+                    Ok(Expr::Identifier {
+                        name: token.lexeme,
+                        span: token.span,
+                    })
+                }
+            }
             TokenKind::Integer => Ok(Expr::Integer {
                 value: token.lexeme,
                 span: token.span,
@@ -721,6 +815,7 @@ fn decode_string_literal(raw: &str) -> String {
 fn expr_span(expr: &Expr) -> Span {
     match expr {
         Expr::Identifier { span, .. }
+        | Expr::StructLiteral { span, .. }
         | Expr::Integer { span, .. }
         | Expr::Float { span, .. }
         | Expr::String { span, .. }
@@ -751,6 +846,51 @@ mod tests {
     fn parsed(source: &str) -> Result<super::Program, super::ParseError> {
         let tokens = tokenize(source).expect("source should tokenize");
         parse(&tokens)
+    }
+
+    #[test]
+    fn parses_struct_declarations_and_named_struct_literals() {
+        let program = parsed(
+            "struct Point:\n    x: Float\n    y: Float\nfunction main():\n    let point = Point { x: 2.0, y: 5.0 }\n    return\n",
+        )
+        .unwrap();
+
+        let Stmt::Struct { name, fields, .. } = &program.statements[0] else {
+            panic!("expected a structure declaration");
+        };
+        assert_eq!(name, "Point");
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].name, "x");
+        assert_eq!(fields[0].ty.name, "Float");
+        assert_eq!(fields[1].name, "y");
+
+        let Stmt::Function { body, .. } = &program.statements[1] else {
+            panic!("expected a function declaration");
+        };
+        let Stmt::Let {
+            value: Some(Expr::StructLiteral { name, fields, .. }),
+            ..
+        } = &body[0]
+        else {
+            panic!("expected a named structure literal");
+        };
+        assert_eq!(name, "Point");
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].0, "x");
+        assert_eq!(fields[1].0, "y");
+    }
+
+    #[test]
+    fn rejects_malformed_struct_declarations_and_literals() {
+        for source in [
+            "struct Point\n    x: Int\n",
+            "struct Point:\nx: Int\n",
+            "struct Point:\n    x Int\n",
+            "let point = Point { x 1 }\n",
+            "let point = Point { x: 1\n",
+        ] {
+            assert!(parsed(source).is_err(), "source should fail: {source:?}");
+        }
     }
 
     #[test]
