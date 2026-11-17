@@ -265,6 +265,14 @@ impl Checker {
         self.error(error.to_string(), span);
     }
 
+    fn root_identifier(expression: &Expr) -> Option<(&str, Span)> {
+        match expression {
+            Expr::Identifier { name, span } => Some((name, *span)),
+            Expr::Member { object, .. } => Self::root_identifier(object),
+            _ => None,
+        }
+    }
+
     fn place_for_expression(&self, expression: &Expr) -> Option<Place> {
         match expression {
             Expr::Identifier { name, .. } => self
@@ -612,33 +620,32 @@ impl Checker {
                     };
                     self.expect_type(actual, target_type, *span, "field assignment type mismatch");
 
-                    if let Expr::Identifier {
-                        name: root_name,
-                        span: root_span,
-                    } = object.as_ref()
-                    {
+                    if let Some((root_name, root_span)) = Self::root_identifier(object) {
                         if let Some(variable) = self.lookup(root_name) {
                             if !variable.mutable {
                                 self.error(
                                     format!(
                                         "cannot assign to field '{field_name}' of immutable binding '{root_name}'"
                                     ),
-                                    *root_span,
+                                    root_span,
                                 );
                             } else if actual != Type::Unknown && actual == target_type {
                                 self.consume_if_owned(value, actual);
                                 if actual == Type::String {
-                                    let place = Place::new(variable.ownership_id.to_string())
-                                        .field(field_name.clone());
-                                    if let Err(error) = self.ownership.assign(place) {
-                                        self.ownership_error(error, *target_span);
+                                    if let Some(place) = self
+                                        .place_for_expression(object)
+                                        .map(|place| place.field(field_name.clone()))
+                                    {
+                                        if let Err(error) = self.ownership.assign(place) {
+                                            self.ownership_error(error, *target_span);
+                                        }
                                     }
                                 }
                             }
                         }
                     } else {
                         self.error(
-                            "field assignment currently requires a named local structure value",
+                            "field assignment requires a field of a named local structure value",
                             *target_span,
                         );
                     }
@@ -1259,6 +1266,20 @@ function main():
     let previous_name = person.name
     person.name = \"Grace\"
     print(person.name)
+    return
+";
+        assert!(checked(source).is_ok());
+    }
+
+    #[test]
+    fn moving_and_reinitializing_a_nested_string_field_tracks_its_full_place() {
+        let source = "struct Contact:
+    email: String
+function main():
+    mut contact = Contact { email: \"old@example.test\" }
+    let previous = contact.email
+    contact.email = \"new@example.test\"
+    print(contact.email)
     return
 ";
         assert!(checked(source).is_ok());
