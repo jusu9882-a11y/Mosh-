@@ -662,6 +662,10 @@ impl Builder {
                 self.error("list literals are not supported by the current MIR backend", *span);
                 None
             }
+            Expr::Dict { span, .. } => {
+                self.error("dictionary literals are not supported by the current MIR backend", *span);
+                None
+            }
             Expr::Identifier { name, span } => self.emit(
                 block,
                 InstructionKind::Load { name: name.clone() },
