@@ -11,8 +11,16 @@ use std::ptr;
 use crate::interpreter::Interpreter;
 use crate::{lexer, parser};
 
-pub struct MoshRuntime {
+pub pub struct MoshRuntime {
     interpreter: Interpreter,
+}
+
+impl MoshRuntime {
+    pub fn with_backend(backend: std::sync::Arc<dyn crate::device::DeviceBackend>) -> Self {
+        Self {
+            interpreter: Interpreter::with_device_backend(backend),
+        }
+    }
 }
 
 fn json_escape(value: &str) -> String {
