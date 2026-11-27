@@ -1,13 +1,14 @@
 use crate::lexer::{Span, TokenKind};
 use crate::parser::{Expr, Program, Stmt};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::fmt;
 use std::io::{self, Write};
 use std::fs;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-#[derive(Debug, Clone, PartialEq)]
+# [derive(Debug, Clone)]
 pub enum Value {
     Integer(i64),
     Float(f64),
@@ -16,7 +17,27 @@ pub enum Value {
     List(Rc<RefCell<Vec<Value>>>),
     Dict(Rc<RefCell<HashMap<String, Value>>>),
     Tuple(Vec<Value>),
+    Module(Rc<RefCell<Interpreter>>),
+    FunctionRef(Rc<RefCell<Interpreter>>, String),
     Nil,
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Integer(a), Self::Integer(b)) => a == b,
+            (Self::Float(a), Self::Float(b)) => a == b,
+            (Self::String(a), Self::String(b)) => a == b,
+            (Self::Boolean(a), Self::Boolean(b)) => a == b,
+            (Self::List(a), Self::List(b)) => *a.borrow() == *b.borrow(),
+            (Self::Dict(a), Self::Dict(b)) => *a.borrow() == *b.borrow(),
+            (Self::Tuple(a), Self::Tuple(b)) => a == b,
+            (Self::Module(a), Self::Module(b)) => Rc::ptr_eq(a, b),
+            (Self::FunctionRef(a, an), Self::FunctionRef(b, bn)) => an == bn && Rc::ptr_eq(a, b),
+            (Self::Nil, Self::Nil) => true,
+            _ => false,
+        }
+    }
 }
 
 impl fmt::Display for Value {
@@ -48,6 +69,8 @@ impl fmt::Display for Value {
                 if values.len() == 1 { write!(f, ",")?; }
                 write!(f, ")")
             }
+            Self::Module(_) => write!(f, "<module>"),
+            Self::FunctionRef(_, name) => write!(f, "<function {name}>"),
             Self::Nil => write!(f, "nil"),
         }
     }
@@ -66,13 +89,13 @@ impl fmt::Display for RuntimeError {
 }
 impl std::error::Error for RuntimeError {}
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct Binding {
     value: Value,
     mutable: bool,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct Function {
     params: Vec<String>,
     body: Vec<Stmt>,
@@ -87,6 +110,9 @@ pub struct Interpreter {
     scopes: Vec<HashMap<String, Binding>>,
     functions: HashMap<String, Function>,
     output: bool,
+    source_path: Option<PathBuf>,
+    module_cache: Rc<RefCell<HashMap<PathBuf, Rc<RefCell<Interpreter>>>>>,
+    import_stack: Rc<RefCell<Vec<PathBuf>>>,
 }
 
 impl Interpreter {
@@ -95,7 +121,18 @@ impl Interpreter {
             scopes: vec![HashMap::new()],
             functions: HashMap::new(),
             output: false,
+            source_path: None,
+            module_cache: Rc::new(RefCell::new(HashMap::new())),
+            import_stack: Rc::new(RefCell::new(Vec::new())),
         }
+    }
+
+    fn with_module_state(cache: Rc<RefCell<HashMap<PathBuf, Rc<RefCell<Interpreter>>>>>, stack: Rc<RefCell<Vec<PathBuf>>>, source_path: PathBuf) -> Self {
+        Self { scopes: vec![HashMap::new()], functions: HashMap::new(), output: false, source_path: Some(source_path), module_cache: cache, import_stack: stack }
+    }
+
+    pub fn set_source_path(&mut self, path: impl AsRef<Path>) {
+        self.source_path = Some(path.as_ref().to_path_buf());
     }
 
     pub fn set_echo(&mut self, enabled: bool) {
@@ -118,6 +155,43 @@ impl Interpreter {
         Ok(last)
     }
 
+    fn load_module(&mut self, requested: &str, span: Span) -> Result<Rc<RefCell<Interpreter>>, RuntimeError> {
+        let requested_path = Path::new(requested);
+        let candidate = if requested_path.is_absolute() {
+            requested_path.to_path_buf()
+        } else {
+            let base = self.source_path.as_ref().and_then(|p| p.parent()).ok_or_else(|| self.error(
+                "relative imports require execution from a .mosh file; imports are unavailable in the REPL", span))?;
+            base.join(requested_path)
+        };
+        let canonical = candidate.canonicalize().map_err(|error| self.error(
+            &format!("cannot resolve imported module '{}': {error}", candidate.display()), span))?;
+        if let Some(module) = self.module_cache.borrow().get(&canonical).cloned() { return Ok(module); }
+        {
+            let stack = self.import_stack.borrow();
+            if let Some(position) = stack.iter().position(|path| path == &canonical) {
+                let mut chain = stack[position..].iter().map(|p| p.display().to_string()).collect::<Vec<_>>();
+                chain.push(canonical.display().to_string());
+                return Err(self.error(&format!("circular import detected: {}", chain.join(" -> ")), span));
+            }
+        }
+        let source = fs::read_to_string(&canonical).map_err(|error| self.error(
+            &format!("cannot read imported module '{}': {error}", canonical.display()), span))?;
+        let tokens = crate::lexer::tokenize(&source).map_err(|error| self.error(
+            &format!("{}: {error}", canonical.display()), span))?;
+        let program = crate::parser::parse(&tokens).map_err(|error| self.error(
+            &format!("{}: {error}", canonical.display()), span))?;
+        self.import_stack.borrow_mut().push(canonical.clone());
+        let module = Rc::new(RefCell::new(Interpreter::with_module_state(
+            self.module_cache.clone(), self.import_stack.clone(), canonical.clone())));
+        let execution = module.borrow_mut().execute(&program);
+        self.import_stack.borrow_mut().pop();
+        execution.map_err(|error| self.error(
+            &format!("module '{}' failed: {error}", canonical.display()), span))?;
+        self.module_cache.borrow_mut().insert(canonical, module.clone());
+        Ok(module)
+    }
+
     fn execute_block(&mut self, statements: &[Stmt], scoped: bool) -> Result<Flow, RuntimeError> {
         if scoped { self.scopes.push(HashMap::new()); }
         let result = (|| {
@@ -135,6 +209,13 @@ impl Interpreter {
 
     fn execute_stmt(&mut self, stmt: &Stmt) -> Result<Flow, RuntimeError> {
         match stmt {
+            Stmt::Import { path, alias, span } => {
+                let module = self.load_module(path, *span)?;
+                let scope = self.scopes.last_mut().expect("interpreter always has a scope");
+                if scope.contains_key(alias) { return Err(self.error(&format!("'{alias}' is already declared in this scope"), *span)); }
+                scope.insert(alias.clone(), Binding { value: Value::Module(module), mutable: false });
+                Ok(Flow::Continue)
+            }
             Stmt::Function { name, params, body, .. } => {
                 self.functions.insert(name.clone(), Function {
                     params: params.iter().map(|p| p.name.clone()).collect(),
@@ -305,11 +386,14 @@ impl Interpreter {
                 self.binary(lhs, operator, rhs, *span)
             }
             Expr::Call { callee, arguments, span } => {
-                let Expr::Identifier { name, .. } = callee.as_ref() else {
-                    return Err(self.error("only named function calls are supported", *span));
-                };
                 let args = arguments.iter().map(|arg| self.eval(arg)).collect::<Result<Vec<_>, _>>()?;
-                self.call(name, args, *span)
+                match callee.as_ref() {
+                    Expr::Identifier { name, .. } => self.call(name, args, *span),
+                    _ => match self.eval(callee)? {
+                        Value::FunctionRef(module, name) => module.borrow_mut().call(&name, args, *span),
+                        _ => Err(self.error("expression is not callable", *span)),
+                    }
+                }
             }
             Expr::Index { object, index, span } => {
                 let object = self.eval(object)?;
@@ -321,8 +405,21 @@ impl Interpreter {
                     _ => Err(self.error("indexing requires a list, tuple, or dictionary", *span)),
                 }
             }
-            Expr::Member { span, .. } =>
-                Err(self.error("member access is not implemented yet", *span)),
+            Expr::Member { object, name, span } => {
+                match self.eval(object)? {
+                    Value::Module(module) => {
+                        let module_ref = module.borrow();
+                        if let Some(binding) = module_ref.scopes.first().and_then(|scope| scope.get(name)) {
+                            Ok(binding.value.clone())
+                        } else if module_ref.functions.contains_key(name) {
+                            Ok(Value::FunctionRef(module.clone(), name.clone()))
+                        } else {
+                            Err(self.error(&format!("module has no exported member '{name}'"), *span))
+                        }
+                    }
+                    _ => Err(self.error("member access is only supported on modules", *span)),
+                }
+            },
         }
     }
 
@@ -531,7 +628,8 @@ fn stmt_span(stmt: &Stmt) -> Span {
         Stmt::Function { span, .. } | Stmt::Let { span, .. } | Stmt::Return { span, .. }
         | Stmt::Raise { span, .. } | Stmt::Try { span, .. }
         | Stmt::If { span, .. } | Stmt::While { span, .. } | Stmt::For { span, .. }
-        | Stmt::Assign { span, .. } | Stmt::Expression { span, .. } => *span,
+        | Stmt::Assign { span, .. } | Stmt::Expression { span, .. }
+        | Stmt::Import { span, .. } => *span,
     }
 }
 
