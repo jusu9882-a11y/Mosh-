@@ -1,0 +1,20 @@
+@ Real filesystem path inspection and composition.
+let folder = path_join("data", "reports")
+print(folder)
+
+print("Working directory:")
+print(current_dir())
+
+print("Absolute folder path:")
+print(absolute_path(folder))
+
+if is_dir("."):
+    print("Current directory is a directory")
+
+if is_file("README.md"):
+    print("README.md bytes:")
+    print(file_size("README.md"))
+
+print("Entries in the current directory:")
+for entry in list_dir("."):
+    print(entry)
