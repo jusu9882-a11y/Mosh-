@@ -8,7 +8,7 @@ use std::fs;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-# [derive(Debug, Clone)]
+#[derive(Debug, Clone)]
 pub enum Value {
     Integer(i64),
     Float(f64),
@@ -106,7 +106,7 @@ enum Flow {
     Return(Value),
 }
 
-# [derive(Debug)]
+#[derive(Debug)]
 pub struct Interpreter {
     scopes: Vec<HashMap<String, Binding>>,
     functions: HashMap<String, Function>,
