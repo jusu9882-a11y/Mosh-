@@ -782,7 +782,7 @@ fn precedence(kind: &TokenKind) -> Option<(u8, bool)> {
 fn decode_import_path(raw: &str) -> Option<String> {
     let quote = raw.chars().next()?;
     let inner = raw.strip_prefix(quote)?.strip_suffix(quote)?;
-    if inner.is_empty() || inner.contains('\\\\') { return None; }
+    if inner.is_empty() || inner.contains(char::from(92)) { return None; }
     Some(inner.to_owned())
 }
 
