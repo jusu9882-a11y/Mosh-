@@ -1,9 +1,4 @@
-pub mod device;
-mod interpreter;
-mod lexer;
-mod parser;
-mod semantic;
-mod typecheck;
+use moshc::{interpreter, lexer, parser, semantic, typecheck};
 
 use std::env;
 use std::fs;
