@@ -1167,7 +1167,13 @@ mod tests {
 
     #[test]
     fn catches_runtime_errors_and_exposes_error_message() {
-        let source = "mut message = \"\"\ntry:\n    let value = 10 / 0\ncatch error:\n    message = error\nmessage\n";
+        let source = r#"mut message = ""
+try:
+    device.camera.request_permission()
+catch error:
+    message = error
+message
+"#;
         let result = run(source).unwrap();
         assert!(matches!(result, Value::String(message) if message.contains("division by zero")));
     }
