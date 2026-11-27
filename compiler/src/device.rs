@@ -804,6 +804,28 @@ mod tests {
     }
 
     #[test]
+    fn procfs_backend_lists_storage_mounts_and_decodes_escaped_paths() {
+        let root = std::env::temp_dir().join(format!("mosh-mounts-fixture-{}", std::process::id()));
+        let power = root.join("power");
+        let proc = root.join("proc");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&power).unwrap();
+        fs::create_dir_all(&proc).unwrap();
+        fs::write(proc.join("mounts"), "/dev/root / ext4 rw,relatime 0 0\n/dev/sda1 /mnt/My\\040Drive ext4 ro,nosuid 0 0\n").unwrap();
+        let backend = SysfsBackend::with_paths(&power, &proc, Platform::Linux);
+        let volumes = backend.read_storage_volumes().unwrap();
+        assert_eq!(volumes.len(), 2);
+        assert_eq!(volumes[0].mount_point, "/");
+        assert!(!volumes[0].read_only);
+        assert_eq!(volumes[1].mount_point, "/mnt/My Drive");
+        assert_eq!(volumes[1].filesystem, "ext4");
+        assert!(volumes[1].read_only);
+        assert!(backend.capability("device.storage").supported);
+        assert!(backend.capability("device.fs").supported);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn procfs_backend_reads_memory_and_cpu_telemetry() {
         let root = std::env::temp_dir().join(format!("mosh-proc-fixture-{}", std::process::id()));
         let power = root.join("power");
