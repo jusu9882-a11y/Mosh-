@@ -666,6 +666,26 @@ mod tests {
     }
 
     #[test]
+    fn catches_runtime_errors_and_exposes_error_message() {
+        let source = "mut message = \"\"\ntry:\n    let value = 10 / 0\ncatch error:\n    message = error\nmessage\n";
+        let result = run(source).unwrap();
+        assert!(matches!(result, Value::String(message) if message.contains("division by zero")));
+    }
+
+    #[test]
+    fn raises_explicit_errors_and_propagates_them_through_functions() {
+        let source = "function fail():\n    raise \"deliberate failure\"\nmut message = \"\"\ntry:\n    fail()\ncatch error:\n    message = error\nmessage\n";
+        let result = run(source).unwrap();
+        assert!(matches!(result, Value::String(message) if message.contains("deliberate failure")));
+    }
+
+    #[test]
+    fn try_success_skips_catch_and_nested_catch_handles_errors() {
+        let source = "mut result = 0\ntry:\n    try:\n        result = 1\n    catch inner:\n        result = 2\ncatch outer:\n    result = 3\nresult\n";
+        assert_eq!(run(source).unwrap(), Value::Integer(1));
+    }
+
+    #[test]
     fn filesystem_builtins_use_the_real_filesystem() {
         let root = std::env::temp_dir().join(format!("mosh-io-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
