@@ -528,6 +528,14 @@ impl Checker {
                         }
                         Type::Unknown
                     }
+                } else if is_device_expression(callee) {
+                    if !arguments.is_empty() {
+                        self.error("device namespace methods do not accept arguments", *span);
+                    }
+                    for argument in arguments {
+                        self.expression(argument);
+                    }
+                    Type::Unknown
                 } else {
                     self.error(
                         "calling a value is not supported by the initial type checker",
