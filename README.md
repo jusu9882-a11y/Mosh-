@@ -10,7 +10,7 @@ Mosh is being developed incrementally: start with a practical interpreted langua
 - **Initial execution engine:** Tree-walk interpreter
 - **Source files:** `.mosh`
 - **Comments:** `@`
-- **Current values:** integers, floats, strings, booleans, nil, and mutable lists
+- **Current values:** integers, floats, strings, booleans, nil, mutable lists, and string-keyed dictionaries
 - **Later execution engines:** bytecode VM, then optional LLVM native backend
 - **Long-term type and memory model:** static typing, ownership and borrowing, with explicit unsafe low-level facilities
 
@@ -29,6 +29,7 @@ The interpreter is the first usable execution path. Existing semantic analysis, 
 - Named functions and return values.
 - Built-ins: `print()`, `input()`, `len()`, `push()`, and `pop()`.
 - List literals, nested lists, positive/negative indexing, indexed assignment, and list/string iteration.
+- Dictionary literals with string keys, lookup, insertion/update, deterministic key iteration, and `keys()`, `has_key()`, and `remove()` built-ins.
 - Runtime diagnostics with source line and column.
 - A loop iteration safety limit.
 
@@ -49,6 +50,7 @@ Run a source file:
 
 ```sh
 cargo run --bin mosh -- run ../examples/collections.mosh
+cargo run --bin mosh -- run ../examples/dictionaries.mosh
 ```
 
 Start the interactive shell:
