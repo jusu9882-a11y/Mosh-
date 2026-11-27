@@ -20,6 +20,7 @@ pub struct Program {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stmt {
+    Import { path: String, alias: String, span: Span },
     Function {
         name: String,
         params: Vec<Parameter>,
@@ -253,6 +254,7 @@ impl<'a> Parser<'a> {
 
     fn statement(&mut self) -> Result<Stmt, ParseError> {
         match self.kind() {
+            TokenKind::Import => self.import_stmt(),
             TokenKind::Function => self.function(),
             TokenKind::Let | TokenKind::Mut => self.binding(false),
             TokenKind::Return => self.return_stmt(),
@@ -266,6 +268,18 @@ impl<'a> Parser<'a> {
             }
             _ => self.assignment_or_expr(),
         }
+    }
+
+    fn import_stmt(&mut self) -> Result<Stmt, ParseError> {
+        let start = self.expect(TokenKind::Import, "expected 'import'")?.span;
+        let path_token = self.expect(TokenKind::String, "expected a quoted module path after 'import'")?.clone();
+        let path = decode_import_path(&path_token.lexeme).ok_or_else(|| ParseError {
+            message: "invalid module path string".into(),
+            span: path_token.span,
+        })?;
+        self.expect(TokenKind::As, "expected 'as' and a module alias")?;
+        let alias = self.identifier("expected module alias after 'as'")?;
+        Ok(Stmt::Import { path, alias, span: join(start, self.previous().span) })
     }
 
     fn function(&mut self) -> Result<Stmt, ParseError> {
@@ -759,6 +773,19 @@ fn precedence(kind: &TokenKind) -> Option<(u8, bool)> {
         _ => return None,
     };
     Some((p, false))
+}
+
+fn decode_import_path(raw: &str) -> Option<String> {
+    let quote = raw.chars().next()?;
+    let inner = raw.strip_prefix(quote)?.strip_suffix(quote)?;
+    let mut result = String::new();
+    let mut chars = inner.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\\\' {
+            match chars.next()? { 'n' => result.push('\\n'), 'r' => result.push('\\r'), 't' => result.push('\\t'), '\\\\' => result.push('\\\\'), '\\'' => result.push('\\''), '"' => result.push('"'), other => { result.push('\\\\'); result.push(other); } }
+        } else { result.push(ch); }
+    }
+    if result.is_empty() { None } else { Some(result) }
 }
 
 fn expr_span(expr: &Expr) -> Span {
