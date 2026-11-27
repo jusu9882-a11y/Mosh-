@@ -468,7 +468,7 @@ impl Interpreter {
             }
             "sqrt" | "floor" | "ceil" | "round" => {
                 if args.len() != 1 { return Err(self.error(&format!("{name}() expects exactly one number"), span)); }
-                let value = match &args[0] { Value::Integer(v) => *v as f64, Value::Float(v) => *v, _ => return Err(self.error(&format!("{name}() argument must be a number"), span) };
+                let value = match &args[0] { Value::Integer(v) => *v as f64, Value::Float(v) => *v, _ => return Err(self.error(&format!("{name}() argument must be a number"), span)) };
                 if name == "sqrt" && value < 0.0 { return Err(self.error("sqrt() cannot accept a negative number", span)); }
                 let result = match name { "sqrt" => value.sqrt(), "floor" => value.floor(), "ceil" => value.ceil(), _ => value.round() };
                 if !result.is_finite() { return Err(self.error(&format!("{name}() result is not finite"), span)); }
