@@ -162,6 +162,16 @@ impl Analyzer {
                     self.expression(value);
                 }
             }
+            Stmt::Raise { value, .. } => self.expression(value),
+            Stmt::Try { body, catch_name, catch_body, span } => {
+                self.block(body);
+                self.push_scope();
+                if !self.define(catch_name, SymbolKind::Variable { mutable: false }) {
+                    self.error(format!("duplicate catch binding '{catch_name}'"), *span);
+                }
+                for child in catch_body { self.statement(child); }
+                self.pop_scope();
+            }
             Stmt::If {
                 condition,
                 then_body,
