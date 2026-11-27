@@ -43,6 +43,8 @@ jobs:
         run: cargo run --bin mosh -- run ../examples/exceptions.mosh
       - name: Run module import example
         run: cargo run --bin mosh -- run ../examples/modules.mosh
+      - name: Run standard library example
+        run: cargo run --bin mosh -- run ../examples/standard_library.mosh
       - name: Smoke-test multiline REPL
         shell: bash
         run: |

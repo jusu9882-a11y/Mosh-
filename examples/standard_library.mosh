@@ -1,0 +1,17 @@
+@ Numeric and collection helpers in the Mosh standard library.
+
+let values = range(1, 6)
+print(values)
+print("sum:", sum(values))
+print("square root:", sqrt(81))
+print("power:", pow(2, 8))
+print("minimum:", min(8, 3, 12))
+print("maximum:", max(8, 3, 12))
+print("rounded:", round(3.7))
+print("integer conversion:", int("42"))
+print("type:", type(values))
+
+mut total = 0
+for value in values:
+    total = total + value
+print("loop total:", total)
