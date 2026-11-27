@@ -402,6 +402,10 @@ impl Checker {
             Expr::Float { .. } => Type::Float,
             Expr::String { .. } => Type::String,
             Expr::Boolean { .. } => Type::Bool,
+            Expr::List { elements, .. } => {
+                for element in elements { self.expression(element); }
+                Type::Unknown
+            }
             Expr::Identifier { name, .. } => match self.lookup(name) {
                 Some(variable) => variable.ty,
                 None => Type::Unknown,
@@ -460,11 +464,15 @@ impl Checker {
                     span: callee_span,
                 } = callee.as_ref()
                 {
-                    if name == "print" {
-                        for argument in arguments {
-                            self.expression(argument);
-                        }
-                        return Type::Unit;
+                    if matches!(name.as_str(), "print" | "input" | "len" | "push" | "pop") {
+                        for argument in arguments { self.expression(argument); }
+                        return match name.as_str() {
+                            "len" => Type::Int,
+                            "input" => Type::String,
+                            "print" | "push" => Type::Unit,
+                            "pop" => Type::Unknown,
+                            _ => Type::Unknown,
+                        };
                     }
                     if let Some(signature) = self.functions.get(name).cloned() {
                         if arguments.len() != signature.parameters.len() {
@@ -624,6 +632,7 @@ fn expr_span(expression: &Expr) -> Span {
         | Expr::Float { span, .. }
         | Expr::String { span, .. }
         | Expr::Boolean { span, .. }
+        | Expr::List { span, .. }
         | Expr::Unary { span, .. }
         | Expr::Binary { span, .. }
         | Expr::Call { span, .. }
