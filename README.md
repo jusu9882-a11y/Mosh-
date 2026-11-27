@@ -31,9 +31,10 @@ There is no LLVM backend, bytecode VM, native executable output, or compiler com
 - String helpers: `upper()`, `lower()`, `trim()`, `trim_start()`, `trim_end()`, `contains()`, `starts_with()`, `ends_with()`, `replace()`, `split()`, and `join()`.
 - Filesystem helpers: `read_text()`, `write_text()`, `append_text()`, `file_exists()`, and `create_dir()`.
 - Runtime exceptions with `try:`, `catch error:`, and `raise value`.
+- Top-level module imports using `import "module.mosh" as module`, with isolated namespaces, relative paths from the importing file, successful-module caching, and circular-import detection.
 - Runtime diagnostics with source line and column, plus a loop iteration safety limit.
 
-**Filesystem security:** filesystem built-ins use the operating-system permissions of the Mosh process. Mosh is not a sandbox; do not run untrusted source files.
+**Filesystem and import security:** filesystem built-ins and imported modules use the operating-system permissions of the Mosh process. Mosh is not a sandbox; only run trusted source files and modules.
 
 ## Quick start
 
@@ -62,7 +63,7 @@ cargo run --bin mosh
 
 - `mosh` or `mosh repl` — start the interactive interpreter.
 - `mosh run file.mosh` — execute a source file.
-- `mosh check file.mosh` — run the currently supported semantic and type diagnostics; this does not compile or execute the program.
+- `mosh check file.mosh` — run the currently supported semantic and type diagnostics; interpreter-only imports are explicitly rejected by this command.
 - `mosh lex file.mosh` — inspect tokens.
 - `mosh parse file.mosh` — inspect the parsed syntax tree.
 - `mosh --version` — print the interpreter version.
