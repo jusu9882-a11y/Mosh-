@@ -34,6 +34,7 @@ The interpreter is the first usable execution path. Existing semantic analysis, 
 - String helpers: `upper()`, `lower()`, `trim()`, `trim_start()`, `trim_end()`, `contains()`, `starts_with()`, `ends_with()`, `replace()`, `split()`, and `join()`.
 - Real filesystem helpers: `read_text()`, `write_text()`, `append_text()`, `file_exists()`, and `create_dir()`; paths are relative to the process working directory unless absolute.
 - **Filesystem security:** these functions access the host filesystem using the permissions of the Mosh process. The interpreter is not sandboxed; do not run untrusted `.mosh` programs.
+- Interpreter exceptions: `try:` / `catch error:` handles runtime failures, while `raise value` raises an explicit runtime error. The caught `error` binding is a string containing the error message and source location. Errors propagate through function calls until caught.
 - Runtime diagnostics with source line and column.
 - A loop iteration safety limit.
 
