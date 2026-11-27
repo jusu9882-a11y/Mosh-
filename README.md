@@ -37,6 +37,7 @@ There is no LLVM backend, bytecode VM, native executable output, or compiler com
 - Runtime exceptions with `try:`, `catch error:`, and `raise value`.
 - Top-level module imports using `import "module.mosh" as module`, with isolated namespaces, relative paths from the importing file, successful-module caching, and circular-import detection.
 - Runtime diagnostics with source line and column, plus a loop iteration safety limit.
+- Device capability introspection through `device.<module>.is_supported()`, `is_available()`, `capabilities()`, `status()`, `permission()`, and explicit `request_permission()` calls. Without a registered native host adapter, modules truthfully report unsupported.
 
 **Filesystem and import security:** filesystem built-ins and imported modules use the operating-system permissions of the Mosh process. Mosh is not a sandbox; only run trusted source files and modules.
 
@@ -56,6 +57,7 @@ cargo run --bin mosh -- run ../examples/collections.mosh
 cargo run --bin mosh -- run ../examples/dictionaries.mosh
 cargo run --bin mosh -- run ../examples/tuples_strings.mosh
 cargo run --bin mosh -- run ../examples/standard_library.mosh
+cargo run --bin mosh -- run ../examples/device_capabilities.mosh
 ```
 
 Start the REPL:
@@ -63,6 +65,20 @@ Start the REPL:
 ```sh
 cargo run --bin mosh
 ```
+
+## Device namespace
+
+Mosh exposes a capability-first `device` namespace. For example:
+
+```mosh
+let camera = device.camera.capabilities()
+if device.camera.is_supported():
+    print(device.camera.permission())
+else:
+    print(camera[\"limitations\"])
+```
+
+Available introspection methods are `is_supported()`, `is_available()`, `capabilities()`, `status()`, and `permission()`. `request_permission()` is an explicit operation and may trigger a host OS permission prompt only when a real adapter is installed. It returns a permission-state string or raises a structured runtime error. The default CLI/REPL host has no native adapter, so hardware modules report unsupported; this is intentional, not simulated device support. Hardware operations such as camera capture, Wi-Fi scanning, Bluetooth discovery, and battery readings are not yet exposed.
 
 ## CLI
 
