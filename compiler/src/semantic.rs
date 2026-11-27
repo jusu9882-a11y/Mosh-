@@ -340,8 +340,8 @@ mod tests {
 
     #[test]
     fn accepts_device_namespace_references() {
-        assert!(checked("device.camera.is_supported()\\n").is_ok());
-        assert!(checked("let info = device.battery.capabilities()\\n").is_ok());
+        assert!(checked("device.camera.is_supported()\n").is_ok());
+        assert!(checked("let info = device.battery.capabilities()\n").is_ok());
     }
 
     #[test]
