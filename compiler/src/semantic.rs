@@ -108,6 +108,11 @@ impl Analyzer {
 
     fn statement(&mut self, statement: &Stmt) {
         match statement {
+            Stmt::Import { alias, span, .. } => {
+                if !self.define(alias, SymbolKind::Variable { mutable: false }) {
+                    self.error(format!("duplicate import alias '{alias}'"), *span);
+                }
+            }
             Stmt::Function {
                 name,
                 params,
