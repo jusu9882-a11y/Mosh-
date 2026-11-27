@@ -96,6 +96,10 @@ pub enum Expr {
         entries: Vec<(Expr, Expr)>,
         span: Span,
     },
+    Tuple {
+        elements: Vec<Expr>,
+        span: Span,
+    },
     Unary {
         operator: TokenKind,
         operand: Box<Expr>,
@@ -562,9 +566,21 @@ impl<'a> Parser<'a> {
                 })
             }
             TokenKind::LeftParen => {
-                let expr = self.expression(0)?;
-                self.expect(TokenKind::RightParen, "expected ')' after expression")?;
-                Ok(expr)
+                if self.take(&TokenKind::RightParen) {
+                    return Ok(Expr::Tuple { elements: Vec::new(), span: join(token.span, self.previous().span) });
+                }
+                let first = self.expression(0)?;
+                if !self.take(&TokenKind::Comma) {
+                    self.expect(TokenKind::RightParen, "expected ')' after expression")?;
+                    return Ok(first);
+                }
+                let mut elements = vec![first];
+                while !self.check(&TokenKind::RightParen) {
+                    elements.push(self.expression(0)?);
+                    if !self.take(&TokenKind::Comma) { break; }
+                }
+                let close = self.expect(TokenKind::RightParen, "expected ')' after tuple elements")?.span;
+                Ok(Expr::Tuple { elements, span: join(token.span, close) })
             }
             TokenKind::LeftBracket => {
                 let mut elements = Vec::new();
@@ -734,6 +750,7 @@ fn expr_span(expr: &Expr) -> Span {
         | Expr::Boolean { span, .. }
         | Expr::List { span, .. }
         | Expr::Dict { span, .. }
+        | Expr::Tuple { span, .. }
         | Expr::Unary { span, .. }
         | Expr::Binary { span, .. }
         | Expr::Call { span, .. }
@@ -970,6 +987,14 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert!(matches!(&entries[0].0, Expr::String { .. }));
         assert!(parsed("let bad = {1: \"no\"}\n").is_err());
+    }
+
+    #[test]
+    fn parses_tuples_and_preserves_grouped_expressions() {
+        let program = parsed("let pair = (1, \"two\",)\nlet grouped = (1 + 2)\nlet empty = ()\n").unwrap();
+        assert!(matches!(&program.statements[0], Stmt::Let { value: Some(Expr::Tuple { elements, .. }), .. } if elements.len() == 2));
+        assert!(matches!(&program.statements[1], Stmt::Let { value: Some(Expr::Binary { .. }), .. }));
+        assert!(matches!(&program.statements[2], Stmt::Let { value: Some(Expr::Tuple { elements, .. }), .. } if elements.is_empty()));
     }
 
     #[test]
