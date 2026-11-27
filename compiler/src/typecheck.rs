@@ -296,6 +296,14 @@ impl Checker {
                     self.expect_type(actual, expected, *span, "return type mismatch");
                 }
             }
+            Stmt::Raise { value, .. } => { let _ = self.expression(value); }
+            Stmt::Try { body, catch_name, catch_body, span } => {
+                self.block(body);
+                self.push_scope();
+                self.define(catch_name, Variable { ty: Type::String, mutable: false }, *span);
+                for child in catch_body { self.statement(child); }
+                self.pop_scope();
+            }
             Stmt::If {
                 condition,
                 then_body,
