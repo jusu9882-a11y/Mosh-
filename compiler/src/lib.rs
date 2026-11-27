@@ -3,6 +3,7 @@
 //! Device access is supplied by the host through `DeviceBackend`; the interpreter
 //! itself does not assume that a platform or hardware resource is available.
 
+pub mod android_backend;
 pub mod device;
 pub mod ffi;
 pub mod interpreter;
