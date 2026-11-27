@@ -542,8 +542,12 @@ impl Checker {
             }
             Expr::Member { object, span, .. } => {
                 self.expression(object);
-                self.error("member access requires compound types, which are not in the initial type checker", *span);
-                Type::Unknown
+                if is_device_expression(object) {
+                    Type::Unknown
+                } else {
+                    self.error("member access requires compound types, which are not in the initial type checker", *span);
+                    Type::Unknown
+                }
             }
             Expr::Index {
                 object,
@@ -646,6 +650,14 @@ fn statement_guarantees_return(statement: &Stmt) -> bool {
     }
 }
 
+fn is_device_expression(expression: &Expr) -> bool {
+    match expression {
+        Expr::Identifier { name, .. } => name == "device",
+        Expr::Member { object, .. } => is_device_expression(object),
+        _ => false,
+    }
+}
+
 fn expr_span(expression: &Expr) -> Span {
     match expression {
         Expr::Identifier { span, .. }
@@ -675,6 +687,13 @@ mod tests {
         let program = parse(&tokens).expect("source should parse");
         crate::semantic::analyze(&program).expect("source should pass name resolution");
         check(&program)
+    }
+
+    #[test]
+    fn accepts_device_namespace_calls_as_host_resolved_values() {
+        let tokens = crate::lexer::tokenize("device.camera.is_supported()\\n").unwrap();
+        let program = crate::parser::parse(&tokens).unwrap();
+        assert!(check(&program).is_ok());
     }
 
     #[test]
