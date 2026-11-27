@@ -1,5 +1,5 @@
 @ Device capabilities are queried from the active host adapter.
-@ The standard CLI host has no native adapter, so support is reported honestly.
+@ Linux and Android can read battery telemetry through kernel power_supply sysfs.
 
 let camera = device.camera.capabilities()
 print(camera["module"])
@@ -11,5 +11,15 @@ if device.camera.is_supported():
     print(device.camera.permission())
 else:
     print(camera["limitations"])
+
+if device.battery.is_supported():
+    if device.battery.is_available():
+        let battery = device.battery.read()
+        print(battery["capacity_percent"])
+        print(battery["state"])
+    else:
+        print(device.battery.capabilities()["limitations"])
+else:
+    print(device.battery.capabilities()["limitations"])
 
 print(device.wifi_direct.is_supported())
