@@ -25,6 +25,10 @@ The CLI and REPL install a Linux/Android procfs/sysfs adapter when running on th
 
 A native adapter must query the actual OS and device. It must distinguish hardware absence from permission denial and temporary unavailability. Permission prompts must be initiated only by an explicit program/user action and must respect app lifecycle interruption and revocation.
 
+## Embedding boundary
+
+`compiler/src/lib.rs` now exposes the interpreter, parser, lexer, diagnostics, and `DeviceBackend` contracts as a Rust library. Rust host applications can construct an `Interpreter` with a custom backend. This does not yet provide a C ABI, JNI exports, Kotlin bindings, Swift bindings, or a Windows DLL interface. Those bridge layers must be implemented and tested separately before Android/iOS/Windows applications can call into Mosh directly.
+
 ## Platform adapter plan
 
 - Android: Kotlin/JVM adapter via JNI or a small host bridge; use Android platform APIs and runtime permissions.

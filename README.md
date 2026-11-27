@@ -80,6 +80,26 @@ else:
 
 Available introspection methods are `is_supported()`, `is_available()`, `capabilities()`, `status()`, and `permission()`. `request_permission()` is an explicit operation and may trigger a host OS permission prompt only when a real adapter is installed. It returns a permission-state string or raises a structured runtime error. The default CLI/REPL host has no native adapter, so hardware modules report unsupported; this is intentional, not simulated device support. The Linux/Android procfs/sysfs backend also exposes real battery telemetry through `device.battery.read()`, memory telemetry through `device.memory.read()` (also available as `device.ram.read()`), CPU information through `device.cpu.read()`, and mounted-volume inventory through `device.storage.volumes()` (also available as `device.fs.volumes()`). It reports capacity, charging state, voltage, current, temperature, and technology where the kernel exposes those attributes. Camera capture, Wi-Fi scanning, Bluetooth discovery, and other hardware operations remain unavailable until their native adapters are implemented.
 
+## Embedding the interpreter
+
+The `moshc` Rust library exposes the interpreter and device backend contracts so a native host can inject its real platform adapter instead of relying on the CLI default:
+
+```rust
+use std::sync::Arc;
+use moshc::device::SysfsBackend;
+use moshc::interpreter::Interpreter;
+use moshc::{lexer, parser};
+
+let backend = Arc::new(SysfsBackend::system());
+let mut interpreter = Interpreter::with_device_backend(backend);
+let tokens = lexer::tokenize("device.battery.is_supported()\n")?;
+let program = parser::parse(&tokens)?;
+let result = interpreter.execute(&program)?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+A platform host should implement `DeviceBackend` using the relevant native APIs and inject it with `Interpreter::with_device_backend`. The default CLI backend is intended for Linux/Android procfs/sysfs telemetry; iOS and Windows require their own adapters.
+
 ## CLI
 
 - `mosh` or `mosh repl` — start the interactive interpreter.
