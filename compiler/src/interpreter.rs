@@ -268,7 +268,8 @@ impl Interpreter {
                     return Err(self.error("indexing currently requires a list", *span));
                 };
                 let index = self.normalize_index(&index, values.borrow().len(), *span)?;
-                Ok(values.borrow()[index].clone())
+                let value = values.borrow()[index].clone();
+                Ok(value)
             }
             Expr::Member { span, .. } =>
                 Err(self.error("member access is not implemented yet", *span)),
