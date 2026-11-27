@@ -278,9 +278,6 @@ impl Analyzer {
                 self.expression(object);
                 self.expression(index);
             }
-            Expr::List { elements, .. } => {
-                for element in elements { self.expression(element); }
-            }
             Expr::Integer { .. }
             | Expr::Float { .. }
             | Expr::String { .. }
