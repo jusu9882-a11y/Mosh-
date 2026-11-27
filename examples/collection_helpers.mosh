@@ -1,0 +1,13 @@
+@ Collection helpers return new values without mutating their inputs.
+
+let numbers = [8, 3, 5, 1]
+let ordered = sorted(numbers)
+let backwards = reverse(numbers)
+
+print(ordered)
+print(backwards)
+print(numbers)
+
+let profile = {"name": "Mosh", "version": 1}
+print(values(profile))
+print(reverse("Mosh"))
