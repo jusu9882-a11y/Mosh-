@@ -5,6 +5,9 @@ edition = "2021"
 description = "The Mosh interpreted programming language runtime"
 license = "UNLICENSED"
 
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [[bin]]
 name = "moshc"
 path = "src/main.rs"
