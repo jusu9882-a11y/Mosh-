@@ -32,6 +32,7 @@ The interpreter is the first usable execution path. Existing semantic analysis, 
 - Dictionary literals with string keys, lookup, insertion/update, deterministic key iteration, and `keys()`, `has_key()`, and `remove()` built-ins.
 - Tuple literals, including empty and single-element tuples, indexing, negative indexing, iteration, and `len()`.
 - String helpers: `upper()`, `lower()`, `trim()`, `trim_start()`, `trim_end()`, `contains()`, `starts_with()`, `ends_with()`, `replace()`, `split()`, and `join()`.
+- Real filesystem helpers: `read_text()`, `write_text()`, `append_text()`, `file_exists()`, and `create_dir()`; paths are relative to the process working directory unless absolute.
 - Runtime diagnostics with source line and column.
 - A loop iteration safety limit.
 
