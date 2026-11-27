@@ -66,8 +66,12 @@ impl Interpreter {
         Self {
             scopes: vec![HashMap::new()],
             functions: HashMap::new(),
-            output: true,
+            output: false,
         }
+    }
+
+    pub fn set_echo(&mut self, enabled: bool) {
+        self.output = enabled;
     }
 
     pub fn execute(&mut self, program: &Program) -> Result<Value, RuntimeError> {
