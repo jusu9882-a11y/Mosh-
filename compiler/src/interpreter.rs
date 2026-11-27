@@ -210,6 +210,25 @@ impl Interpreter {
                 }
                 Ok(Flow::Continue)
             }
+            Stmt::Raise { value, span } => {
+                let raised = self.eval(value)?;
+                Err(self.error(&raised.to_string(), *span))
+            }
+            Stmt::Try { body, catch_name, catch_body, .. } => {
+                match self.execute_block(body, true) {
+                    Ok(flow) => Ok(flow),
+                    Err(error) => {
+                        self.scopes.push(HashMap::new());
+                        self.scopes.last_mut().unwrap().insert(
+                            catch_name.clone(),
+                            Binding { value: Value::String(error.to_string()), mutable: false },
+                        );
+                        let result = self.execute_block(catch_body, true);
+                        self.scopes.pop();
+                        result
+                    }
+                }
+            }
             Stmt::Return { value, .. } => Ok(Flow::Return(match value {
                 Some(expr) => self.eval(expr)?,
                 None => Value::Nil,
@@ -510,7 +529,7 @@ impl Interpreter {
 fn stmt_span(stmt: &Stmt) -> Span {
     match stmt {
         Stmt::Function { span, .. } | Stmt::Let { span, .. } | Stmt::Return { span, .. }
-        | Stmt::If { span, .. } | Stmt::While { span, .. } | Stmt::For { span, .. }
+        | Stmt::Raise { span, .. } | Stmt::Try { span, .. }\n        | Stmt::If { span, .. } | Stmt::While { span, .. } | Stmt::For { span, .. }
         | Stmt::Assign { span, .. } | Stmt::Expression { span, .. } => *span,
     }
 }
