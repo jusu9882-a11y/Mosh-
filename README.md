@@ -25,6 +25,8 @@ There is no LLVM backend, bytecode VM, native executable output, or compiler com
 - `if` / `else`, `while`, and `for` loops.
 - Named functions and return values.
 - Built-ins: `print()`, `input()`, `len()`, `push()`, and `pop()`.
+- Numeric and conversion helpers: `abs()`, `sqrt()`, `floor()`, `ceil()`, `round()`, `pow()`, `min()`, `max()`, `sum()`, `int()`, `float()`, `str()`, and `type()`.
+- `range()` creates bounded integer sequences with optional start and step arguments.
 - Mutable and nested lists, positive/negative indexing, and indexed assignment.
 - String-keyed dictionaries with lookup, insertion/update, deterministic key iteration, `keys()`, `has_key()`, and `remove()`.
 - Immutable tuples, including empty and single-element tuples, indexing, iteration, and `len()`.
@@ -51,6 +53,7 @@ Run a program:
 cargo run --bin mosh -- run ../examples/collections.mosh
 cargo run --bin mosh -- run ../examples/dictionaries.mosh
 cargo run --bin mosh -- run ../examples/tuples_strings.mosh
+cargo run --bin mosh -- run ../examples/standard_library.mosh
 ```
 
 Start the REPL:
