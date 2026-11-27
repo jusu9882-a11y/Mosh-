@@ -1314,7 +1314,7 @@ message
         fs::write(battery.join("capacity"), "64\n").unwrap();
         fs::write(battery.join("status"), "Charging\n").unwrap();
 
-        let backend = Arc::new(crate::device::SysfsBackend::with_root(&root, crate::device::Platform::Linux));
+        let backend = std::sync::Arc::new(crate::device::SysfsBackend::with_root(&root, crate::device::Platform::Linux));
         let mut interpreter = Interpreter::with_device_backend(backend);
         let source = "device.battery.read()\n";
         let program = parse(&tokenize(source).unwrap()).unwrap();
