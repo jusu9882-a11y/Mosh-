@@ -2,11 +2,15 @@
 name = "moshc"
 version = "0.1.0"
 edition = "2021"
-description = "The Mosh programming language compiler"
+description = "The Mosh programming language interpreter and compiler"
 license = "UNLICENSED"
 
 [[bin]]
 name = "moshc"
+path = "src/main.rs"
+
+[[bin]]
+name = "mosh"
 path = "src/main.rs"
 
 [dependencies]
