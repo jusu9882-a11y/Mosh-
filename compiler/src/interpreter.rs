@@ -590,6 +590,56 @@ impl Interpreter {
                 let Value::String(key) = &args[1] else { return Err(self.error("remove() key must be a string", span)); };
                 Ok(entries.borrow_mut().remove(key).unwrap_or(Value::Nil))
             }
+            "values" => {
+                if args.len() != 1 { return Err(self.error("values() expects exactly one dictionary", span)); }
+                let Value::Dict(entries) = &args[0] else { return Err(self.error("values() argument must be a dictionary", span)); };
+                let entries = entries.borrow();
+                let mut keys: Vec<_> = entries.keys().collect();
+                keys.sort();
+                Ok(Value::List(Rc::new(RefCell::new(keys.into_iter().map(|key| entries[key].clone()).collect()))))
+            }
+            "sorted" => {
+                if args.len() != 1 { return Err(self.error("sorted() expects exactly one list or tuple", span)); }
+                let mut values = match &args[0] {
+                    Value::List(values) => values.borrow().clone(),
+                    Value::Tuple(values) => values.clone(),
+                    _ => return Err(self.error("sorted() expects a list or tuple", span)),
+                };
+                let numeric = values.iter().all(|v| matches!(v, Value::Integer(_) | Value::Float(_)));
+                let strings = values.iter().all(|v| matches!(v, Value::String(_)));
+                if !numeric && !strings && !values.is_empty() {
+                    return Err(self.error("sorted() values must all be numbers or all be strings", span));
+                }
+                if numeric {
+                    values.sort_by(|a, b| {
+                        let number = |value: &Value| match value { Value::Integer(v) => *v as f64, Value::Float(v) => *v, _ => unreachable!() };
+                        number(a).partial_cmp(&number(b)).unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                } else {
+                    values.sort_by(|a, b| {
+                        let (Value::String(a), Value::String(b)) = (a, b) else { unreachable!() };
+                        a.cmp(b)
+                    });
+                }
+                Ok(Value::List(Rc::new(RefCell::new(values))))
+            }
+            "reverse" => {
+                if args.len() != 1 { return Err(self.error("reverse() expects exactly one list, tuple, or string", span)); }
+                match &args[0] {
+                    Value::List(values) => {
+                        let mut reversed = values.borrow().clone();
+                        reversed.reverse();
+                        Ok(Value::List(Rc::new(RefCell::new(reversed))))
+                    }
+                    Value::Tuple(values) => {
+                        let mut reversed = values.clone();
+                        reversed.reverse();
+                        Ok(Value::List(Rc::new(RefCell::new(reversed))))
+                    }
+                    Value::String(value) => Ok(Value::String(value.chars().rev().collect())),
+                    _ => Err(self.error("reverse() expects a list, tuple, or string", span)),
+                }
+            }
             "upper" | "lower" | "trim" | "trim_start" | "trim_end" => {
                 if args.len() != 1 { return Err(self.error("string transformation expects exactly one argument", span)); }
                 let Value::String(value) = &args[0] else { return Err(self.error("string transformation expects a string", span)); };
@@ -1103,6 +1153,19 @@ mod tests {
         assert!(run("file_size(\"/mosh-missing-file\")\n").unwrap_err().message.contains("file_size() failed"));
         assert!(run("list_dir(\"/mosh-missing-dir\")\n").unwrap_err().message.contains("list_dir() failed"));
         assert!(run("current_dir(\"extra\")\n").unwrap_err().message.contains("no arguments"));
+    }
+
+    #[test]
+    fn supports_sorted_reverse_and_dictionary_values() {
+        assert_eq!(run("sorted([4, 1, 3, 2])\n").unwrap(),
+            Value::List(Rc::new(RefCell::new(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3), Value::Integer(4)]))));
+        assert_eq!(run("sorted([\"pear\", \"apple\", \"mango\"])\n").unwrap(),
+            Value::List(Rc::new(RefCell::new(vec![Value::String("apple".into()), Value::String("mango".into()), Value::String("pear".into())]))));
+        assert_eq!(run("reverse([1, 2, 3])[0]\n").unwrap(), Value::Integer(3));
+        assert_eq!(run("reverse(\"mosh\")\n").unwrap(), Value::String("hsom".into()));
+        assert_eq!(run("let data = {\"b\": 20, \"a\": 10}\nvalues(data)[0]\n").unwrap(), Value::Integer(10));
+        assert!(run("sorted([1, \"two\"])\n").unwrap_err().message.contains("all be numbers or all be strings"));
+        assert!(run("values([1, 2])\n").unwrap_err().message.contains("dictionary"));
     }
 
     #[test]
