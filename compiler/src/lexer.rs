@@ -21,6 +21,9 @@ pub enum TokenKind {
 
     Function,
     Return,
+    Raise,
+    Try,
+    Catch,
     If,
     Else,
     While,
@@ -257,6 +260,9 @@ impl<'a> Lexer<'a> {
         let kind = match text {
             "function" => TokenKind::Function,
             "return" => TokenKind::Return,
+            "raise" => TokenKind::Raise,
+            "try" => TokenKind::Try,
+            "catch" => TokenKind::Catch,
             "if" => TokenKind::If,
             "else" => TokenKind::Else,
             "while" => TokenKind::While,
