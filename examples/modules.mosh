@@ -1,0 +1,5 @@
+@ Import reusable code from a sibling .mosh file.
+import "math_utils.mosh" as math
+
+print(math.square(7))
+print(math.answer)
