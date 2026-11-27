@@ -14,6 +14,7 @@ pub enum Value {
     Boolean(bool),
     List(Rc<RefCell<Vec<Value>>>),
     Dict(Rc<RefCell<HashMap<String, Value>>>),
+    Tuple(Vec<Value>),
     Nil,
 }
 
@@ -39,6 +40,12 @@ impl fmt::Display for Value {
                 write!(f, "{{")?;
                 for (index, key) in keys.iter().enumerate() { if index > 0 { write!(f, ", ")?; } write!(f, "\"{}\": {}", key, entries[*key])?; }
                 write!(f, "}}")
+            }
+            Self::Tuple(values) => {
+                write!(f, "(")?;
+                for (index, value) in values.iter().enumerate() { if index > 0 { write!(f, ", ")?; } write!(f, "{value}")?; }
+                if values.len() == 1 { write!(f, ",")?; }
+                write!(f, ")")
             }
             Self::Nil => write!(f, "nil"),
         }
@@ -210,6 +217,7 @@ impl Interpreter {
                 let values = match self.eval(iterable)? {
                     Value::List(values) => values.borrow().clone(),
                     Value::String(value) => value.chars().map(|ch| Value::String(ch.to_string())).collect(),
+                    Value::Tuple(values) => values.clone(),
                     Value::Dict(entries) => { let mut keys: Vec<_> = entries.borrow().keys().cloned().collect(); keys.sort(); keys.into_iter().map(Value::String).collect() }
                     _ => return Err(self.error("for-loop requires a list, dictionary, or string", *span)),
                 };
@@ -250,6 +258,10 @@ impl Interpreter {
                 }
                 Ok(Value::Dict(Rc::new(RefCell::new(values))))
             }
+            Expr::Tuple { elements, .. } => {
+                let values = elements.iter().map(|element| self.eval(element)).collect::<Result<Vec<_>, _>>()?;
+                Ok(Value::Tuple(values))
+            }
             Expr::Identifier { name, span } => {
                 for scope in self.scopes.iter().rev() {
                     if let Some(binding) = scope.get(name) { return Ok(binding.value.clone()); }
@@ -285,7 +297,8 @@ impl Interpreter {
                 match object {
                     Value::List(values) => { let index = self.normalize_index(&index, values.borrow().len(), *span)?; Ok(values.borrow()[index].clone()) }
                     Value::Dict(entries) => { let Value::String(key) = index else { return Err(self.error("dictionary key must be a string", *span)); }; entries.borrow().get(&key).cloned().ok_or_else(|| self.error(&format!("dictionary has no key '{key}'"), *span)) }
-                    _ => Err(self.error("indexing requires a list or dictionary", *span)),
+                    Value::Tuple(values) => { let index = self.normalize_index(&index, values.len(), *span)?; Ok(values[index].clone()) }
+                    _ => Err(self.error("indexing requires a list, tuple, or dictionary", *span)),
                 }
             }
             Expr::Member { span, .. } =>
@@ -300,6 +313,7 @@ impl Interpreter {
                 let length = match &args[0] {
                     Value::List(values) => values.borrow().len(),
                     Value::Dict(values) => values.borrow().len(),
+                    Value::Tuple(values) => values.len(),
                     Value::String(value) => value.chars().count(),
                     _ => return Err(self.error("len() expects a list, dictionary, or string", span)),
                 };
@@ -337,6 +351,36 @@ impl Interpreter {
                 let Value::Dict(entries) = &args[0] else { return Err(self.error("remove() first argument must be a dictionary", span)); };
                 let Value::String(key) = &args[1] else { return Err(self.error("remove() key must be a string", span)); };
                 Ok(entries.borrow_mut().remove(key).unwrap_or(Value::Nil))
+            }
+            "upper" | "lower" | "trim" | "trim_start" | "trim_end" => {
+                if args.len() != 1 { return Err(self.error("string transformation expects exactly one argument", span)); }
+                let Value::String(value) = &args[0] else { return Err(self.error("string transformation expects a string", span)); };
+                Ok(Value::String(match name { "upper" => value.to_uppercase(), "lower" => value.to_lowercase(), "trim" => value.trim().to_owned(), "trim_start" => value.trim_start().to_owned(), _ => value.trim_end().to_owned() }))
+            }
+            "contains" | "starts_with" | "ends_with" => {
+                if args.len() != 2 { return Err(self.error("string predicate expects two string arguments", span)); }
+                let (Value::String(value), Value::String(pattern)) = (&args[0], &args[1]) else { return Err(self.error("string predicate arguments must be strings", span)); };
+                Ok(Value::Boolean(match name { "contains" => value.contains(pattern), "starts_with" => value.starts_with(pattern), _ => value.ends_with(pattern) }))
+            }
+            "replace" => {
+                if args.len() != 3 { return Err(self.error("replace() expects a string, search text, and replacement", span)); }
+                let (Value::String(value), Value::String(from), Value::String(to)) = (&args[0], &args[1], &args[2]) else { return Err(self.error("replace() arguments must be strings", span)); };
+                Ok(Value::String(value.replace(from, to)))
+            }
+            "split" => {
+                if args.len() != 2 { return Err(self.error("split() expects a string and separator", span)); }
+                let (Value::String(value), Value::String(separator)) = (&args[0], &args[1]) else { return Err(self.error("split() arguments must be strings", span)); };
+                if separator.is_empty() { return Err(self.error("split() separator cannot be empty", span)); }
+                Ok(Value::List(Rc::new(RefCell::new(value.split(separator).map(|part| Value::String(part.to_owned())).collect()))))
+            }
+            "join" => {
+                if args.len() != 2 { return Err(self.error("join() expects a list of strings and a separator", span)); }
+                let Value::List(values) = &args[0] else { return Err(self.error("join() first argument must be a list", span)); };
+                let Value::String(separator) = &args[1] else { return Err(self.error("join() separator must be a string", span)); };
+                let values = values.borrow();
+                let mut parts = Vec::with_capacity(values.len());
+                for value in values.iter() { let Value::String(part) = value else { return Err(self.error("join() list must contain only strings", span)); }; parts.push(part.as_str()); }
+                Ok(Value::String(parts.join(separator)))
             }
             "print" => {
                 for (index, value) in args.iter().enumerate() {
@@ -417,6 +461,7 @@ impl Interpreter {
             Value::String(v) => !v.is_empty(),
             Value::List(v) => !v.borrow().is_empty(),
             Value::Dict(v) => !v.borrow().is_empty(),
+            Value::Tuple(v) => !v.is_empty(),
             Value::Nil => false,
         }
     }
