@@ -13,3 +13,10 @@ else:
     print(camera["limitations"])
 
 print(device.wifi_direct.is_supported())
+
+if device.battery.is_supported() and device.battery.is_available():
+    let battery = device.battery.read()
+    print(battery["capacity_percent"])
+    print(battery["state"])
+else:
+    print(device.battery.capabilities()["limitations"])
