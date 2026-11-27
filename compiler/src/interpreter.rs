@@ -146,8 +146,8 @@ impl Interpreter {
         interpreter
     }
 
-    fn with_module_state(cache: Rc<RefCell<HashMap<PathBuf, Rc<RefCell<Interpreter>>>>>, stack: Rc<RefCell<Vec<PathBuf>>>, source_path: PathBuf) -> Self {
-        Self { scopes: vec![HashMap::new()], functions: HashMap::new(), output: false, source_path: Some(source_path), module_cache: cache, import_stack: stack }
+    fn with_module_state(cache: Rc<RefCell<HashMap<PathBuf, Rc<RefCell<Interpreter>>>>>, stack: Rc<RefCell<Vec<PathBuf>>>, source_path: PathBuf, device_registry: DeviceRegistry) -> Self {
+        Self { scopes: vec![HashMap::new()], functions: HashMap::new(), output: false, source_path: Some(source_path), module_cache: cache, import_stack: stack, device_registry }
     }
 
     pub fn set_source_path(&mut self, path: impl AsRef<Path>) {
@@ -202,7 +202,7 @@ impl Interpreter {
             &format!("{}: {error}", canonical.display()), span))?;
         self.import_stack.borrow_mut().push(canonical.clone());
         let module = Rc::new(RefCell::new(Interpreter::with_module_state(
-            self.module_cache.clone(), self.import_stack.clone(), canonical.clone())));
+            self.module_cache.clone(), self.import_stack.clone(), canonical.clone(), self.device_registry.clone())));
         let execution = module.borrow_mut().execute(&program);
         self.import_stack.borrow_mut().pop();
         execution.map_err(|error| self.error(
