@@ -136,7 +136,7 @@ impl Interpreter {
             source_path: None,
             module_cache: Rc::new(RefCell::new(HashMap::new())),
             import_stack: Rc::new(RefCell::new(Vec::new())),
-            device_registry: DeviceRegistry::unsupported(),
+            device_registry: DeviceRegistry::system_default(),
         }
     }
 
@@ -428,7 +428,7 @@ impl Interpreter {
                 match self.eval(object)? {
                     Value::DeviceRoot => Ok(Value::DeviceModule(name.clone())),
                     Value::DeviceModule(module) => {
-                        const METHODS: &[&str] = &["is_supported", "is_available", "capabilities", "status", "permission", "request_permission"];
+                        const METHODS: &[&str] = &["is_supported", "is_available", "capabilities", "status", "permission", "request_permission", "read"];
                         if METHODS.contains(&name.as_str()) {
                             Ok(Value::DeviceFunction(module.clone(), name.clone()))
                         } else {
@@ -483,6 +483,20 @@ impl Interpreter {
                     .map_err(|error| self.error(&error.to_string(), span))?;
                 Ok(Value::String(permission_name(state).into()))
             }
+            "read" if module == "battery" => {
+                let reading = self.device_registry.read_battery()
+                    .map_err(|error| self.error(&error.to_string(), span))?;
+                let mut values = HashMap::new();
+                values.insert("present".into(), Value::Boolean(reading.present));
+                values.insert("capacity_percent".into(), reading.capacity_percent.map(Value::Float).unwrap_or(Value::Nil));
+                values.insert("state".into(), reading.state.map(Value::String).unwrap_or(Value::Nil));
+                values.insert("voltage_mv".into(), reading.voltage_mv.map(Value::Float).unwrap_or(Value::Nil));
+                values.insert("current_ma".into(), reading.current_ma.map(Value::Float).unwrap_or(Value::Nil));
+                values.insert("temperature_c".into(), reading.temperature_c.map(Value::Float).unwrap_or(Value::Nil));
+                values.insert("technology".into(), reading.technology.map(Value::String).unwrap_or(Value::Nil));
+                Ok(Value::Dict(Rc::new(RefCell::new(values))))
+            }
+            "read" => Err(self.error(&format!("device.{module}.read() is not implemented by the active backend"), span))
             "request_permission" => {
                 let state = self.device_registry.request_permission(&name)
                     .map_err(|error| self.error(&error.to_string(), span))?;
@@ -1287,6 +1301,28 @@ message
 "#;
         let result = run(source).unwrap();
         assert!(matches!(result, Value::String(message) if message.contains("Unsupported")));
+    }
+
+    #[test]
+    fn battery_read_uses_injected_sysfs_backend() {
+        let root = std::env::temp_dir().join(format!("mosh-interpreter-battery-{}", std::process::id()));
+        let battery = root.join("BAT0");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&battery).unwrap();
+        fs::write(battery.join("type"), "Battery\n").unwrap();
+        fs::write(battery.join("present"), "1\n").unwrap();
+        fs::write(battery.join("capacity"), "64\n").unwrap();
+        fs::write(battery.join("status"), "Charging\n").unwrap();
+
+        let backend = Arc::new(crate::device::SysfsBackend::with_root(&root, crate::device::Platform::Linux));
+        let mut interpreter = Interpreter::with_device_backend(backend);
+        let source = "device.battery.read()\n";
+        let program = parse(&tokenize(source).unwrap()).unwrap();
+        let result = interpreter.execute(&program).unwrap();
+        let Value::Dict(values) = result else { panic!("expected battery reading dictionary"); };
+        assert_eq!(values.borrow().get("capacity_percent"), Some(&Value::Float(64.0)));
+        assert_eq!(values.borrow().get("state"), Some(&Value::String("Charging".into())));
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
