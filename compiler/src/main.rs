@@ -1,3 +1,4 @@
+pub mod device;
 mod interpreter;
 mod lexer;
 mod parser;
