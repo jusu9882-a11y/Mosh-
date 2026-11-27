@@ -39,6 +39,8 @@ jobs:
         run: cargo run --bin mosh -- run ../examples/tuples_strings.mosh
       - name: Run filesystem example
         run: cargo run --bin mosh -- run ../examples/file_io.mosh
+      - name: Run path utilities example
+        run: cargo run --bin mosh -- run ../examples/path_utilities.mosh
       - name: Run exception handling example
         run: cargo run --bin mosh -- run ../examples/exceptions.mosh
       - name: Run module import example

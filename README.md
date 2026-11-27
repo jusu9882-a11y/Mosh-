@@ -32,6 +32,7 @@ There is no LLVM backend, bytecode VM, native executable output, or compiler com
 - Immutable tuples, including empty and single-element tuples, indexing, iteration, and `len()`.
 - String helpers: `upper()`, `lower()`, `trim()`, `trim_start()`, `trim_end()`, `contains()`, `starts_with()`, `ends_with()`, `replace()`, `split()`, and `join()`.
 - Filesystem helpers: `read_text()`, `write_text()`, `append_text()`, `file_exists()`, and `create_dir()`.
+- Path helpers: `path_join()`, `is_file()`, `is_dir()`, `file_size()`, `list_dir()` (sorted names), `current_dir()`, and `absolute_path()`.
 - Runtime exceptions with `try:`, `catch error:`, and `raise value`.
 - Top-level module imports using `import "module.mosh" as module`, with isolated namespaces, relative paths from the importing file, successful-module caching, and circular-import detection.
 - Runtime diagnostics with source line and column, plus a loop iteration safety limit.
