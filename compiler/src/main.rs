@@ -61,6 +61,7 @@ fn run_file(path: &str) -> ExitCode {
     let source = match read_source(path) { Ok(s) => s, Err(code) => return code };
     let Some(program) = parse_source(path, &source) else { return ExitCode::from(1); };
     let mut interpreter = interpreter::Interpreter::new();
+    interpreter.set_source_path(path);
     match interpreter.execute(&program) {
         Ok(_) => ExitCode::SUCCESS,
         Err(error) => { eprintln!("mosh: {path}: runtime error: {error}"); ExitCode::from(1) }
