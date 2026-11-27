@@ -666,6 +666,69 @@ mod tests {
     }
 
     #[test]
+    fn imports_module_values_and_functions_in_an_isolated_namespace() {
+        let root = std::env::temp_dir().join(format!("mosh-module-test-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let module_path = root.join("math.mosh");
+        let main_path = root.join("main.mosh");
+        std::fs::write(&module_path, "let answer = 40\nfunction add_two(value: Int) -> Int:\n    return value + 2\n").unwrap();
+        let source = "import \"math.mosh\" as math\nmath.add_two(math.answer)\n";
+        std::fs::write(&main_path, source).unwrap();
+        let tokens = tokenize(source).unwrap();
+        let program = parse(&tokens).unwrap();
+        let mut vm = Interpreter::new();
+        vm.set_source_path(&main_path);
+        assert_eq!(vm.execute(&program).unwrap(), Value::Integer(42));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn imported_names_do_not_leak_into_the_importer() {
+        let root = std::env::temp_dir().join(format!("mosh-module-isolation-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("values.mosh"), "let hidden = 9\n").unwrap();
+        let source = "import \"values.mosh\" as values\nhidden\n";
+        let tokens = tokenize(source).unwrap();
+        let program = parse(&tokens).unwrap();
+        let mut vm = Interpreter::new();
+        vm.set_source_path(root.join("main.mosh"));
+        let error = vm.execute(&program).unwrap_err();
+        assert!(error.message.contains("undefined variable 'hidden'"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn repeated_imports_reuse_the_initialized_module() {
+        let root = std::env::temp_dir().join(format!("mosh-module-cache-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("state.mosh"), "mut count = 0\nfunction increment():\n    count = count + 1\n").unwrap();
+        let source = "import \"state.mosh\" as first\nimport \"state.mosh\" as second\nfirst.increment()\nsecond.count\n";
+        let tokens = tokenize(source).unwrap();
+        let program = parse(&tokens).unwrap();
+        let mut vm = Interpreter::new();
+        vm.set_source_path(root.join("main.mosh"));
+        assert_eq!(vm.execute(&program).unwrap(), Value::Integer(1));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn detects_direct_and_indirect_circular_imports() {
+        let root = std::env::temp_dir().join(format!("mosh-module-cycle-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.mosh"), "import \"b.mosh\" as b\n").unwrap();
+        std::fs::write(root.join("b.mosh"), "import \"a.mosh\" as a\n").unwrap();
+        let source = "import \"a.mosh\" as a\n";
+        let tokens = tokenize(source).unwrap();
+        let program = parse(&tokens).unwrap();
+        let mut vm = Interpreter::new();
+        vm.set_source_path(root.join("main.mosh"));
+        let error = vm.execute(&program).unwrap_err();
+        assert!(error.message.contains("circular import detected"));
+        assert!(error.message.contains("a.mosh") && error.message.contains("b.mosh"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn evaluates_arithmetic_and_variables() {
         assert_eq!(run("let answer = 6 * 7\nanswer\n").unwrap(), Value::Integer(42));
     }
