@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - "compiler/**"
+      - "examples/**"
       - ".github/workflows/rust.yml"
   pull_request:
     paths:
@@ -32,6 +33,8 @@ jobs:
         run: cargo check --all-targets
       - name: Run collections example
         run: cargo run --bin mosh -- run ../examples/collections.mosh
+      - name: Run dictionaries example
+        run: cargo run --bin mosh -- run ../examples/dictionaries.mosh
       - name: Smoke-test multiline REPL
         shell: bash
         run: |
