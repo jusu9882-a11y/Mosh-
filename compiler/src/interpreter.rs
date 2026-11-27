@@ -1169,7 +1169,7 @@ mod tests {
     fn catches_runtime_errors_and_exposes_error_message() {
         let source = r#"mut message = ""
 try:
-    device.camera.request_permission()
+    let value = 10 / 0
 catch error:
     message = error
 message
@@ -1278,7 +1278,13 @@ message
 
     #[test]
     fn device_permission_request_is_an_explicit_unsupported_error_without_adapter() {
-        let source = "mut message = \"\"\ntry:\n    device.camera.request_permission()\ncatch error:\n    message = error\nmessage\n";
+        let source = r#"mut message = ""
+try:
+    device.camera.request_permission()
+catch error:
+    message = error
+message
+"#;
         let result = run(source).unwrap();
         assert!(matches!(result, Value::String(message) if message.contains("Unsupported")));
     }
