@@ -187,7 +187,9 @@ impl SysfsBackend {
         let entries = fs::read_dir(&self.root).ok()?;
         for entry in entries.flatten() {
             let path = entry.path();
-            let kind = fs::read_to_string(path.join("type")).ok()?;
+            let Ok(kind) = fs::read_to_string(path.join("type")) else {
+                continue;
+            };
             if kind.trim().eq_ignore_ascii_case("battery") {
                 return Some(path);
             }
@@ -585,6 +587,55 @@ mod tests {
             registry.request_permission("device.camera").unwrap_err().code,
             DeviceErrorCode::Unsupported
         );
+    }
+
+    #[test]
+    fn sysfs_backend_reads_realistic_battery_attributes_and_units() {
+        let root = std::env::temp_dir().join(format!("mosh-sysfs-battery-{}", std::process::id()));
+        let battery = root.join("BAT0");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&battery).unwrap();
+        fs::write(battery.join("type"), "Battery\n").unwrap();
+        fs::write(battery.join("present"), "1\n").unwrap();
+        fs::write(battery.join("capacity"), "87\n").unwrap();
+        fs::write(battery.join("status"), "Discharging\n").unwrap();
+        fs::write(battery.join("voltage_now"), "4123000\n").unwrap();
+        fs::write(battery.join("current_now"), "-850000\n").unwrap();
+        fs::write(battery.join("temp"), "315\n").unwrap();
+        fs::write(battery.join("technology"), "Li-ion\n").unwrap();
+
+        let backend = SysfsBackend::with_root(&root, Platform::Linux);
+        let capability = backend.capability("device.battery");
+        assert!(capability.supported);
+        assert!(capability.available);
+        assert_eq!(capability.permission, PermissionState::NotRequired);
+        let reading = backend.read_battery().unwrap();
+        assert_eq!(reading.capacity_percent, Some(87.0));
+        assert_eq!(reading.state.as_deref(), Some("Discharging"));
+        assert_eq!(reading.voltage_mv, Some(4123.0));
+        assert_eq!(reading.current_ma, Some(-850.0));
+        assert_eq!(reading.temperature_c, Some(31.5));
+        assert_eq!(reading.technology.as_deref(), Some("Li-ion"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sysfs_backend_does_not_claim_battery_support_when_no_battery_is_present() {
+        let root = std::env::temp_dir().join(format!("mosh-sysfs-empty-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let backend = SysfsBackend::with_root(&root, Platform::Linux);
+        let capability = backend.capability("device.battery");
+        assert!(!capability.supported);
+        assert!(!capability.available);
+        assert_eq!(backend.read_battery().unwrap_err().code, DeviceErrorCode::NotAvailable);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sysfs_backend_rejects_platforms_without_sysfs_adapter_support() {
+        let backend = SysfsBackend::with_root("/sys/class/power_supply", Platform::Windows);
+        assert!(!backend.capability("device.battery").supported);
     }
 
     #[test]
