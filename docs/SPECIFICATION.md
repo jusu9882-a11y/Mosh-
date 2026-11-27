@@ -116,7 +116,7 @@ The following rules are approved and fixed for the initial primitive type checke
 12. Unary `-` accepts numeric operands; unary `!` accepts `Bool`.
 13. Type errors MUST report the expected and actual types where applicable, together with a source location.
 
-The initial checker recognizes `print` as a provisional polymorphic built-in that accepts values and returns `Unit`; this does not finalize the standard-library design. Collection typing, member access, indexing, pointers, structures, enumerations, generics, and ownership/borrow checking are outside this primitive-type milestone. The interpreter currently supports list literals and runtime list operations, but this does not yet mean that lists are represented in the static type system or lowered by MIR. The exact width and signedness of `Int`, and the representation/precision of `Float`, remain open decisions.
+The initial checker recognizes `print` as a provisional polymorphic built-in that accepts values and returns `Unit`; this does not finalize the standard-library design. Collection typing, member access, indexing, pointers, structures, enumerations, generics, and ownership/borrow checking are outside this primitive-type milestone. The interpreter currently supports lists, string-keyed dictionaries, immutable tuples, and runtime collection/string operations. These compound values are not yet represented in the static type system or lowered by MIR. The exact width and signedness of `Int`, and the representation/precision of `Float`, remain open decisions.
 
 Mosh uses static typing. The compiler MAY infer a type when it can do so unambiguously.
 
