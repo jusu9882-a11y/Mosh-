@@ -363,7 +363,7 @@ mod tests {
 
     #[test]
     fn runs_if_else_and_while_loops() {
-        assert_eq!(run("mut n = 0\nwhile n < 4:\n    n = n + 1\nif n == 4:\n    n\nelse:\n    0\n").unwrap(), Value::Integer(4));
+        assert_eq!(run("mut n = 0\nwhile n < 4:\n    n = n + 1\nmut result = 0\nif n == 4:\n    result = n\nelse:\n    result = 0\nresult\n").unwrap(), Value::Integer(4));
     }
 
     #[test]
