@@ -102,7 +102,7 @@ A platform host should implement `DeviceBackend` using the relevant native APIs 
 
 ## C ABI embedding
 
-Mosh also builds a C-compatible shared library. The public header is 'compiler/include/mosh.h'; the runtime returns JSON result strings and all returned strings must be released with 'mosh_string_free()'. Each runtime handle is single-threaded and host calls must be serialized. The Android JNI/Kotlin wrapper is provided under 'platform/android'; it still requires an Android NDK build and physical-device validation. Swift and Windows-specific language bindings are not included yet.
+Mosh also builds a C-compatible shared library. The public header is 'compiler/include/mosh.h'; the runtime returns JSON result strings and all returned strings must be released with 'mosh_string_free()'. Each runtime handle is single-threaded and host calls must be serialized. The Android JNI/Kotlin wrapper is provided under 'platform/android'; it uses Android BatteryManager for battery telemetry and still requires an Android NDK build and physical-device validation. Swift and Windows-specific language bindings are not included yet.
 
 Build it with:
 

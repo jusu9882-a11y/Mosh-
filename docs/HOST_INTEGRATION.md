@@ -58,9 +58,9 @@ Evaluation returns a JSON object with either ok: true and a string-valued value,
 
 ## Device backends
 
-The default runtime uses the built-in Linux/Android procfs/sysfs backend where available. Rust hosts can inject a custom DeviceBackend through Interpreter::with_device_backend.
+The default C ABI runtime uses the Linux/Android procfs/sysfs backend where available. The Android JNI wrapper injects an Android framework backend for battery telemetry and composes the procfs/sysfs backend for memory, CPU, and storage. Rust hosts can inject a custom DeviceBackend through Interpreter::with_device_backend.
 
-The C ABI currently uses the default backend; a C callback table for custom native device backends is not yet part of the ABI. Android framework APIs, iOS protected-resource APIs, and Windows WinRT/Win32 APIs therefore still require their own bridge implementations and physical-device verification.
+The C ABI currently uses the default backend; a C callback table for custom native device backends is not yet part of the ABI. The Android JNI entry point accepts an AndroidDeviceHost object for battery callbacks. Camera, Wi-Fi, Bluetooth, NFC, GPS, microphone, sensors, iOS protected-resource APIs, and Windows WinRT/Win32 APIs still require dedicated bridge implementations and physical-device verification.
 
 ## Security
 

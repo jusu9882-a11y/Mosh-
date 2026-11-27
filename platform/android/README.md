@@ -25,7 +25,7 @@ The expected output is placed under platform/android/src/main/jniLibs/arm64-v8a/
 Copy or include MoshRuntime.kt in the package com.jusu.mosh, package the matching native library in jniLibs, then:
 
 ~~~kotlin
-MoshRuntime().use { runtime ->
+MoshRuntime(applicationContext).use { runtime ->
     val resultJson = runtime.eval("device.battery.is_supported()")
 }
 ~~~

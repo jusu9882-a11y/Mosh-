@@ -31,7 +31,7 @@ A native adapter must query the actual OS and device. It must distinguish hardwa
 
 ## Platform adapter plan
 
-- Android: Kotlin/JVM adapter via JNI or a small host bridge; use Android platform APIs and runtime permissions.
+- Android: JNI/Kotlin host adapter. The current JNI host uses Android BatteryManager and ACTION_BATTERY_CHANGED for battery telemetry, with procfs/sysfs fallback for memory, CPU, and mounted-volume inventory. Camera, connectivity, sensors, and protected-resource permissions still need dedicated Android adapters.
 - iOS: Swift adapter via FFI/host bridge; use the relevant Apple frameworks and their protected-resource authorization flow.
 - Windows: WinRT/Win32 adapter with explicit capability and permission reporting.
 - Linux: service/kernel interfaces such as NetworkManager, BlueZ, V4L2, PipeWire, sysfs, and udev where available.
