@@ -73,6 +73,7 @@ fn run_repl() -> ExitCode {
     println!("Type :quit or :q to exit.");
     let stdin = io::stdin();
     let mut interpreter = interpreter::Interpreter::new();
+    interpreter.set_echo(true);
     let mut line = String::new();
     loop {
         print!(">>> ");
