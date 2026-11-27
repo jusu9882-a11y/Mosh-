@@ -6,6 +6,7 @@
 pub mod device;
 pub mod ffi;
 pub mod interpreter;
+pub mod jni_bridge;
 pub mod lexer;
 pub mod parser;
 pub mod semantic;
