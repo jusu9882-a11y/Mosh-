@@ -36,3 +36,11 @@ if device.cpu.is_supported():
     print(cpu["architecture"])
     print(cpu["logical_cores"])
     print(cpu["frequency_mhz"])
+
+if device.storage.is_supported():
+    let volumes = device.storage.volumes()
+    print(len(volumes))
+    for volume in volumes:
+        print(volume["mount_point"])
+        print(volume["filesystem"])
+        print(volume["read_only"])
