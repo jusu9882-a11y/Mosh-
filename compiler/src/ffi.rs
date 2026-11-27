@@ -11,7 +11,7 @@ use std::ptr;
 use crate::interpreter::Interpreter;
 use crate::{lexer, parser};
 
-pub pub struct MoshRuntime {
+pub struct MoshRuntime {
     interpreter: Interpreter,
 }
 
