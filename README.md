@@ -1,36 +1,101 @@
 # MOSH
 
-**A general-purpose compiled programming language.**
+**Mosh is an interpreter-first general-purpose programming language, implemented in Rust.**
 
-Mosh aims to combine readable, productive syntax with native-code performance ambitions and explicit low-level control.
+Mosh is being developed incrementally: start with a practical interpreted language, then add stronger static analysis, a bytecode virtual machine, and eventually native compilation and low-level systems capabilities. The `.mosh` source extension and `@` comment marker are part of the language contract.
 
-## Foundational architecture
+## Current direction
 
-- **Compiler implementation:** Rust
-- **Type system:** Static typing with type inference
-- **Memory model:** Ownership and borrowing, with explicit low-level facilities
-- **Code generation:** LLVM
-- **Compilation model:** Ahead-of-time (AOT)
-- **Programming scope:** General-purpose, from application software to systems and embedded programming
+- **Implementation language:** Rust
+- **Initial execution engine:** Tree-walk interpreter
+- **Source files:** `.mosh`
+- **Comments:** `@`
+- **Current values:** integers, floats, strings, booleans, nil, and mutable lists
+- **Later execution engines:** bytecode VM, then optional LLVM native backend
+- **Long-term type and memory model:** static typing, ownership and borrowing, with explicit unsafe low-level facilities
 
-## Project status
+The interpreter is the first usable execution path. Existing semantic analysis, type checking, and MIR work are retained; they are not yet a complete replacement for interpreter execution.
 
-Mosh is in its language-design and compiler-foundation stage. Initial provisional lexer and parser stages have been added, including an AST and token/AST inspection commands. They are not yet a stable language contract. Name resolution, type checking, ownership checking, LLVM code generation, and the runtime are not implemented.
+## Current implementation status
 
-## Repository layout
+### Interpreter
 
-- `docs/SPECIFICATION.md` — initial language specification and open design questions
-- `docs/LEXER.md` — provisional lexical rules and current lexer limits
-- `docs/PARSER.md` — provisional grammar, AST scope, and parser limitations
-- `compiler/` — Rust compiler with initial lexer and parser development commands
+- Execute a `.mosh` file with `mosh run file.mosh`.
+- Start an interactive REPL with `mosh` or `mosh repl`.
+- Variables: `let` and `mut`.
+- Integers, floats, strings, booleans, and nil.
+- Arithmetic, comparisons, and boolean operators.
+- `if` / `else`, `while`, and `for` loops.
+- Named functions and return values.
+- Built-ins: `print()`, `input()`, `len()`, `push()`, and `pop()`.
+- List literals, nested lists, positive/negative indexing, indexed assignment, and list/string iteration.
+- Runtime diagnostics with source line and column.
+- A loop iteration safety limit.
+
+### Compiler foundation
+
+The Rust lexer, parser, semantic analyzer, primitive type checker, and MIR infrastructure remain in the repository. The current MIR backend does not yet lower list literals or the full interpreter feature set. Interpreter execution and MIR/native compilation are distinct development tracks.
+
+## Quick start
+
+Build the interpreter from the compiler directory:
+
+```sh
+cd compiler
+cargo build --bin mosh
+```
+
+Run a source file:
+
+```sh
+cargo run --bin mosh -- run examples/collections.mosh
+```
+
+Start the interactive shell:
+
+```sh
+cargo run --bin mosh
+```
+
+Other compiler-inspection commands currently available include `mosh lex`, `mosh parse`, `mosh check`, and `mosh mir`. The checker and MIR backend support a smaller subset than the interpreter.
+
+## Language example
+
+```mosh
+@ A first Mosh collection program
+
+mut fruits = ["Mango", "Apple", "Orange"]
+
+print(fruits[0])
+print(len(fruits))
+
+push(fruits, "Banana")
+
+for fruit in fruits:
+    print(fruit)
+
+mut total = 0
+for number in [1, 2, 3, 4]:
+    total = total + number
+
+print(total)
+```
 
 ## Development principles
 
-1. Specify language behavior before implementing it.
-2. Test every compiler stage.
-3. Make safe-code guarantees precise and auditable.
-4. Make unsafe operations explicit and document their obligations.
-5. Never claim a feature works until it is implemented and tested.
+1. Make each feature work end-to-end before announcing it.
+2. Keep the interpreter executable and its regression tests green as the language grows.
+3. Preserve the existing lexer/parser and compiler work where practical.
+4. Document differences between interpreter support and compiler/MIR support.
+5. Add static types, ownership, bytecode, LLVM, and low-level facilities in deliberate stages.
+6. Never claim a feature is implemented until code and tests verify it.
+
+## Repository layout
+
+- `compiler/` — Rust interpreter and compiler foundation
+- `docs/SPECIFICATION.md` — language architecture and design contract
+- `docs/LEXER.md` — lexical rules
+- `docs/PARSER.md` — grammar and parser behavior
 
 ## License
 
