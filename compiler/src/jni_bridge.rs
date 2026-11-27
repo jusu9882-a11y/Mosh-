@@ -10,6 +10,9 @@ use jni::objects::{JObject, JString};
 use jni::sys::{jlong, jstring};
 use jni::JNIEnv;
 
+use std::sync::Arc;
+
+use crate::android_backend::AndroidBackend;
 use crate::ffi::{
     mosh_runtime_eval, mosh_runtime_free, mosh_runtime_new, mosh_runtime_version,
     mosh_string_free, MoshRuntime,
@@ -23,10 +26,14 @@ fn java_string(env: &mut JNIEnv, value: impl Into<String>) -> jstring {
 
 #[no_mangle]
 pub extern "system" fn Java_com_jusu_mosh_MoshRuntime_nativeCreate(
-    _env: JNIEnv,
+    mut env: JNIEnv,
     _this: JObject,
+    host: JObject,
 ) -> jlong {
-    mosh_runtime_new() as jlong
+    let Ok(backend) = AndroidBackend::new(&mut env, &host) else {
+        return 0;
+    };
+    Box::into_raw(Box::new(MoshRuntime::with_backend(Arc::new(backend)))) as jlong
 }
 
 #[no_mangle]
