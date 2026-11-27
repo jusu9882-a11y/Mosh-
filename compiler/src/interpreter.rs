@@ -106,6 +106,7 @@ enum Flow {
     Return(Value),
 }
 
+# [derive(Debug)]
 pub struct Interpreter {
     scopes: Vec<HashMap<String, Binding>>,
     functions: HashMap<String, Function>,
@@ -211,9 +212,8 @@ impl Interpreter {
         match stmt {
             Stmt::Import { path, alias, span } => {
                 let module = self.load_module(path, *span)?;
-                let scope = self.scopes.last_mut().expect("interpreter always has a scope");
-                if scope.contains_key(alias) { return Err(self.error(&format!("'{alias}' is already declared in this scope"), *span)); }
-                scope.insert(alias.clone(), Binding { value: Value::Module(module), mutable: false });
+                if self.scopes.last().is_some_and(|scope| scope.contains_key(alias)) { return Err(self.error(&format!("'{alias}' is already declared in this scope"), *span)); }
+                self.scopes.last_mut().expect("interpreter always has a scope").insert(alias.clone(), Binding { value: Value::Module(module), mutable: false });
                 Ok(Flow::Continue)
             }
             Stmt::Function { name, params, body, .. } => {
