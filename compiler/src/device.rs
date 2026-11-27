@@ -151,13 +151,6 @@ pub trait DeviceBackend: Send + Sync {
         Err(DeviceError::unsupported("device.battery", "read"))
     }
 
-    fn read_storage_volumes(&self) -> Result<Vec<StorageVolume>, DeviceError> {
-        if !matches!(self.platform, Platform::Android | Platform::Linux) {
-            return Err(DeviceError::unsupported("device.storage", "volumes"));
-        }
-        self.read_storage_from_proc()
-    }
-
     fn read_memory(&self) -> Result<MemoryReading, DeviceError> {
         Err(DeviceError::unsupported("device.memory", "read"))
     }
@@ -381,7 +374,7 @@ impl DeviceBackend for SysfsBackend {
             };
         }
         if module != "device.battery" {
-            return Capability::unsupported(module, self.platform, "this sysfs/procfs adapter implements battery, memory, and CPU telemetry only");
+            return Capability::unsupported(module, self.platform, "this sysfs/procfs adapter implements battery, memory, CPU, and storage telemetry only");
         }
         let Some(path) = self.battery_path() else {
             return Capability::unsupported(module, self.platform, "no readable battery device was detected through power_supply sysfs");
@@ -422,6 +415,13 @@ impl DeviceBackend for SysfsBackend {
             return Err(DeviceError::unsupported(module, "request_permission"));
         }
         Ok(PermissionState::NotRequired)
+    }
+
+    fn read_storage_volumes(&self) -> Result<Vec<StorageVolume>, DeviceError> {
+        if !matches!(self.platform, Platform::Android | Platform::Linux) {
+            return Err(DeviceError::unsupported("device.storage", "volumes"));
+        }
+        self.read_storage_from_proc()
     }
 
     fn read_memory(&self) -> Result<MemoryReading, DeviceError> {
