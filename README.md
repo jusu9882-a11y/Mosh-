@@ -21,7 +21,7 @@ The interpreter is the first usable execution path. Existing semantic analysis, 
 ### Interpreter
 
 - Execute a `.mosh` file with `mosh run file.mosh`.
-- Start an interactive REPL with `mosh` or `mosh repl`.
+- Start an interactive REPL with `mosh` or `mosh repl`, including multi-line compound blocks submitted with a blank line.
 - Variables: `let` and `mut`.
 - Integers, floats, strings, booleans, and nil.
 - Arithmetic, comparisons, and boolean operators.
