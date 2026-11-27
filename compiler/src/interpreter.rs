@@ -611,9 +611,12 @@ impl Interpreter {
                     return Err(self.error("sorted() values must all be numbers or all be strings", span));
                 }
                 if numeric {
-                    values.sort_by(|a, b| {
-                        let number = |value: &Value| match value { Value::Integer(v) => *v as f64, Value::Float(v) => *v, _ => unreachable!() };
-                        number(a).partial_cmp(&number(b)).unwrap_or(std::cmp::Ordering::Equal)
+                    values.sort_by(|a, b| match (a, b) {
+                        (Value::Integer(a), Value::Integer(b)) => a.cmp(b),
+                        (Value::Integer(a), Value::Float(b)) => (*a as f64).partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal),
+                        (Value::Float(a), Value::Integer(b)) => a.partial_cmp(&(*b as f64)).unwrap_or(std::cmp::Ordering::Equal),
+                        (Value::Float(a), Value::Float(b)) => a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal),
+                        _ => unreachable!(),
                     });
                 } else {
                     values.sort_by(|a, b| {
