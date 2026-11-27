@@ -934,7 +934,7 @@ mod tests {
 
     #[test]
     fn parses_list_literals_with_nested_values_and_trailing_commas() {
-        let program = parsed("let values = [1, [2, 3],]\\n").unwrap();
+        let program = parsed("let values = [1, [2, 3],]\n").unwrap();
         let Stmt::Let { value: Some(Expr::List { elements, .. }), .. } = &program.statements[0] else {
             panic!("expected list literal initializer");
         };
