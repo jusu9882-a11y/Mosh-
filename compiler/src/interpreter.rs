@@ -13,6 +13,7 @@ pub enum Value {
     String(String),
     Boolean(bool),
     List(Rc<RefCell<Vec<Value>>>),
+    Dict(Rc<RefCell<HashMap<String, Value>>>),
     Nil,
 }
 
@@ -31,6 +32,13 @@ impl fmt::Display for Value {
                     write!(f, "{value}")?;
                 }
                 write!(f, "]")
+            }
+            Self::Dict(entries) => {
+                let entries = entries.borrow();
+                let mut keys: Vec<_> = entries.keys().collect(); keys.sort();
+                write!(f, "{{")?;
+                for (index, key) in keys.iter().enumerate() { if index > 0 { write!(f, ", ")?; } write!(f, "\"{}\": {}", key, entries[*key])?; }
+                write!(f, "}}")
             }
             Self::Nil => write!(f, "nil"),
         }
@@ -156,11 +164,11 @@ impl Interpreter {
                     Expr::Index { object, index, .. } => {
                         let object = self.eval(object)?;
                         let index = self.eval(index)?;
-                        let Value::List(values) = object else {
-                            return Err(self.error("indexed assignment currently requires a list", *span));
-                        };
-                        let index = self.normalize_index(&index, values.borrow().len(), *span)?;
-                        values.borrow_mut()[index] = next;
+                        match object {
+                            Value::List(values) => { let index = self.normalize_index(&index, values.borrow().len(), *span)?; values.borrow_mut()[index] = next; }
+                            Value::Dict(entries) => { let Value::String(key) = index else { return Err(self.error("dictionary key must be a string", *span)); }; entries.borrow_mut().insert(key, next); }
+                            _ => return Err(self.error("indexed assignment requires a list or dictionary", *span)),
+                        }
                         Ok(Flow::Continue)
                     }
                     _ => Err(self.error("assignment target must be a variable or list index", *span)),
@@ -202,7 +210,8 @@ impl Interpreter {
                 let values = match self.eval(iterable)? {
                     Value::List(values) => values.borrow().clone(),
                     Value::String(value) => value.chars().map(|ch| Value::String(ch.to_string())).collect(),
-                    _ => return Err(self.error("for-loop requires a list or string", *span)),
+                    Value::Dict(entries) => { let mut keys: Vec<_> = entries.borrow().keys().cloned().collect(); keys.sort(); keys.into_iter().map(Value::String).collect() }
+                    _ => return Err(self.error("for-loop requires a list, dictionary, or string", *span)),
                 };
                 if values.len() > 1_000_000 {
                     return Err(self.error("for-loop iteration safety limit exceeded (1,000,000)", *span));
@@ -231,6 +240,15 @@ impl Interpreter {
             Expr::List { elements, .. } => {
                 let values = elements.iter().map(|element| self.eval(element)).collect::<Result<Vec<_>, _>>()?;
                 Ok(Value::List(Rc::new(RefCell::new(values))))
+            }
+            Expr::Dict { entries, span } => {
+                let mut values = HashMap::new();
+                for (key, value) in entries {
+                    let Expr::String { value: raw_key, .. } = key else { return Err(self.error("dictionary keys must be strings", *span)); };
+                    let key = decode_string(raw_key).ok_or_else(|| self.error("invalid dictionary key", *span))?;
+                    values.insert(key, self.eval(value)?);
+                }
+                Ok(Value::Dict(Rc::new(RefCell::new(values))))
             }
             Expr::Identifier { name, span } => {
                 for scope in self.scopes.iter().rev() {
@@ -264,12 +282,11 @@ impl Interpreter {
             Expr::Index { object, index, span } => {
                 let object = self.eval(object)?;
                 let index = self.eval(index)?;
-                let Value::List(values) = object else {
-                    return Err(self.error("indexing currently requires a list", *span));
-                };
-                let index = self.normalize_index(&index, values.borrow().len(), *span)?;
-                let value = values.borrow()[index].clone();
-                Ok(value)
+                match object {
+                    Value::List(values) => { let index = self.normalize_index(&index, values.borrow().len(), *span)?; Ok(values.borrow()[index].clone()) }
+                    Value::Dict(entries) => { let Value::String(key) = index else { return Err(self.error("dictionary key must be a string", *span)); }; entries.borrow().get(&key).cloned().ok_or_else(|| self.error(&format!("dictionary has no key '{key}'"), *span)) }
+                    _ => Err(self.error("indexing requires a list or dictionary", *span)),
+                }
             }
             Expr::Member { span, .. } =>
                 Err(self.error("member access is not implemented yet", *span)),
@@ -282,8 +299,9 @@ impl Interpreter {
                 if args.len() != 1 { return Err(self.error("len() expects exactly one argument", span)); }
                 let length = match &args[0] {
                     Value::List(values) => values.borrow().len(),
+                    Value::Dict(values) => values.borrow().len(),
                     Value::String(value) => value.chars().count(),
-                    _ => return Err(self.error("len() expects a list or string", span)),
+                    _ => return Err(self.error("len() expects a list, dictionary, or string", span)),
                 };
                 Ok(Value::Integer(length as i64))
             }
@@ -301,6 +319,24 @@ impl Interpreter {
                     return Err(self.error("pop() argument must be a list", span));
                 };
                 values.borrow_mut().pop().ok_or_else(|| self.error("cannot pop from an empty list", span))
+            }
+            "keys" => {
+                if args.len() != 1 { return Err(self.error("keys() expects exactly one dictionary", span)); }
+                let Value::Dict(entries) = &args[0] else { return Err(self.error("keys() argument must be a dictionary", span)); };
+                let mut keys: Vec<_> = entries.borrow().keys().cloned().collect(); keys.sort();
+                Ok(Value::List(Rc::new(RefCell::new(keys.into_iter().map(Value::String).collect()))))
+            }
+            "has_key" => {
+                if args.len() != 2 { return Err(self.error("has_key() expects a dictionary and string key", span)); }
+                let Value::Dict(entries) = &args[0] else { return Err(self.error("has_key() first argument must be a dictionary", span)); };
+                let Value::String(key) = &args[1] else { return Err(self.error("has_key() key must be a string", span)); };
+                Ok(Value::Boolean(entries.borrow().contains_key(key)))
+            }
+            "remove" => {
+                if args.len() != 2 { return Err(self.error("remove() expects a dictionary and string key", span)); }
+                let Value::Dict(entries) = &args[0] else { return Err(self.error("remove() first argument must be a dictionary", span)); };
+                let Value::String(key) = &args[1] else { return Err(self.error("remove() key must be a string", span)); };
+                Ok(entries.borrow_mut().remove(key).unwrap_or(Value::Nil))
             }
             "print" => {
                 for (index, value) in args.iter().enumerate() {
@@ -380,6 +416,7 @@ impl Interpreter {
             Value::Float(v) => *v != 0.0,
             Value::String(v) => !v.is_empty(),
             Value::List(v) => !v.borrow().is_empty(),
+            Value::Dict(v) => !v.borrow().is_empty(),
             Value::Nil => false,
         }
     }
@@ -497,6 +534,20 @@ mod tests {
     fn reports_invalid_list_indexes_and_empty_pop() {
         assert!(run("let values = [1]\nvalues[2]\n").unwrap_err().message.contains("out of range"));
         assert!(run("let values = []\npop(values)\n").unwrap_err().message.contains("empty list"));
+    }
+
+    #[test]
+    fn creates_indexes_mutates_and_iterates_dictionaries() {
+        assert_eq!(run("let user = {\"name\": \"Mosh\", \"score\": 7}\nuser[\"name\"]\n").unwrap(), Value::String("Mosh".into()));
+        assert_eq!(run("mut user = {\"score\": 1}\nuser[\"score\"] = 9\nuser[\"score\"]\n").unwrap(), Value::Integer(9));
+        assert_eq!(run("mut user = {\"b\": 2, \"a\": 1}\nlet names = keys(user)\nmut total = 0\nfor name in names:\n    total = total + user[name]\ntotal + len(user)\n").unwrap(), Value::Integer(5));
+        assert_eq!(run("mut user = {\"name\": \"Mosh\"}\nlet found = has_key(user, \"name\")\nlet removed = remove(user, \"name\")\nlen(user)\n").unwrap(), Value::Integer(0));
+    }
+
+    #[test]
+    fn reports_missing_dictionary_keys_and_invalid_key_types() {
+        assert!(run("let data = {\"x\": 1}\ndata[\"missing\"]\n").unwrap_err().message.contains("no key"));
+        assert!(run("let data = {\"x\": 1}\ndata[0]\n").unwrap_err().message.contains("key must be a string"));
     }
 
     #[test]
