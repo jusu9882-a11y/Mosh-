@@ -9,19 +9,21 @@ use jni::objects::{GlobalRef, JObject, JString};
 use jni::JavaVM;
 
 use crate::device::{
-    Capability, DeviceBackend, DeviceError, DeviceErrorCode, BatteryReading, PermissionState, Platform,
+    BatteryReading, Capability, CpuReading, DeviceBackend, DeviceError, DeviceErrorCode,
+    MemoryReading, PermissionState, Platform, StorageVolume, SysfsBackend,
 };
 
 pub struct AndroidBackend {
     vm: JavaVM,
     host: GlobalRef,
+    sysfs: SysfsBackend,
 }
 
 impl AndroidBackend {
     pub fn new(env: &mut jni::JNIEnv<'_>, host: &JObject<'_>) -> Result<Self, DeviceError> {
         let vm = env.get_java_vm().map_err(|error| jni_error("get_java_vm", error))?;
         let host = env.new_global_ref(host).map_err(|error| jni_error("new_global_ref", error))?;
-        Ok(Self { vm, host })
+        Ok(Self { vm, host, sysfs: SysfsBackend::system() })
     }
 
     fn call_bool(&self, method: &str) -> Result<bool, DeviceError> {
@@ -119,11 +121,7 @@ impl DeviceBackend for AndroidBackend {
 
     fn capability(&self, module: &str) -> Capability {
         if module != "device.battery" {
-            return Capability::unsupported(
-                module,
-                Platform::Android,
-                "Android framework adapter currently implements battery telemetry only",
-            );
+            return self.sysfs.capability(module);
         }
         let supported = self.call_bool("batterySupported").unwrap_or(false);
         if !supported {
@@ -153,6 +151,9 @@ impl DeviceBackend for AndroidBackend {
     }
 
     fn permission_state(&self, module: &str) -> Result<PermissionState, DeviceError> {
+        if module != "device.battery" {
+            return self.sysfs.permission_state(module);
+        }
         if !self.capability(module).supported {
             return Err(DeviceError::unsupported(module, "permission_state"));
         }
@@ -160,10 +161,25 @@ impl DeviceBackend for AndroidBackend {
     }
 
     fn request_permission(&self, module: &str) -> Result<PermissionState, DeviceError> {
+        if module != "device.battery" {
+            return self.sysfs.request_permission(module);
+        }
         if !self.capability(module).supported {
             return Err(DeviceError::unsupported(module, "request_permission"));
         }
         Ok(PermissionState::NotRequired)
+    }
+
+    fn read_memory(&self) -> Result<MemoryReading, DeviceError> {
+        self.sysfs.read_memory()
+    }
+
+    fn read_cpu(&self) -> Result<CpuReading, DeviceError> {
+        self.sysfs.read_cpu()
+    }
+
+    fn read_storage_volumes(&self) -> Result<Vec<StorageVolume>, DeviceError> {
+        self.sysfs.read_storage_volumes()
     }
 
     fn read_battery(&self) -> Result<BatteryReading, DeviceError> {
