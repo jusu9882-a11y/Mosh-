@@ -1,3 +1,4 @@
+use crate::device::{DeviceRegistry, PermissionState};
 use crate::lexer::{Span, TokenKind};
 use crate::parser::{Expr, Program, Stmt};
 use std::collections::HashMap;
@@ -19,6 +20,9 @@ pub enum Value {
     Tuple(Vec<Value>),
     Module(Rc<RefCell<Interpreter>>),
     FunctionRef(Rc<RefCell<Interpreter>>, String),
+    DeviceRoot,
+    DeviceModule(String),
+    DeviceFunction(String, String),
     Nil,
 }
 
@@ -34,6 +38,9 @@ impl PartialEq for Value {
             (Self::Tuple(a), Self::Tuple(b)) => a == b,
             (Self::Module(a), Self::Module(b)) => Rc::ptr_eq(a, b),
             (Self::FunctionRef(a, an), Self::FunctionRef(b, bn)) => an == bn && Rc::ptr_eq(a, b),
+            (Self::DeviceRoot, Self::DeviceRoot) => true,
+            (Self::DeviceModule(a), Self::DeviceModule(b)) => a == b,
+            (Self::DeviceFunction(am, an), Self::DeviceFunction(bm, bn)) => am == bm && an == bn,
             (Self::Nil, Self::Nil) => true,
             _ => false,
         }
@@ -71,6 +78,9 @@ impl fmt::Display for Value {
             }
             Self::Module(_) => write!(f, "<module>"),
             Self::FunctionRef(_, name) => write!(f, "<function {name}>"),
+            Self::DeviceRoot => write!(f, "<device namespace>"),
+            Self::DeviceModule(name) => write!(f, "<device module {name}>"),
+            Self::DeviceFunction(module, name) => write!(f, "<device function {module}.{name}>"),
             Self::Nil => write!(f, "nil"),
         }
     }
@@ -114,6 +124,7 @@ pub struct Interpreter {
     source_path: Option<PathBuf>,
     module_cache: Rc<RefCell<HashMap<PathBuf, Rc<RefCell<Interpreter>>>>>,
     import_stack: Rc<RefCell<Vec<PathBuf>>>,
+    device_registry: DeviceRegistry,
 }
 
 impl Interpreter {
@@ -125,7 +136,14 @@ impl Interpreter {
             source_path: None,
             module_cache: Rc::new(RefCell::new(HashMap::new())),
             import_stack: Rc::new(RefCell::new(Vec::new())),
+            device_registry: DeviceRegistry::unsupported(),
         }
+    }
+
+    pub fn with_device_backend(backend: std::sync::Arc<dyn crate::device::DeviceBackend>) -> Self {
+        let mut interpreter = Self::new();
+        interpreter.device_registry = DeviceRegistry::new(backend);
+        interpreter
     }
 
     fn with_module_state(cache: Rc<RefCell<HashMap<PathBuf, Rc<RefCell<Interpreter>>>>>, stack: Rc<RefCell<Vec<PathBuf>>>, source_path: PathBuf) -> Self {
@@ -367,7 +385,7 @@ impl Interpreter {
                 for scope in self.scopes.iter().rev() {
                     if let Some(binding) = scope.get(name) { return Ok(binding.value.clone()); }
                 }
-                Err(self.error(&format!("undefined variable '{name}'"), *span))
+                if name == "device" { Ok(Value::DeviceRoot) } else { Err(self.error(&format!("undefined variable '{name}'"), *span)) }
             }
             Expr::Unary { operator, operand, span } => {
                 let value = self.eval(operand)?;
@@ -391,6 +409,7 @@ impl Interpreter {
                     Expr::Identifier { name, .. } => self.call(name, args, *span),
                     _ => match self.eval(callee)? {
                         Value::FunctionRef(module, name) => module.borrow_mut().call(&name, args, *span),
+                        Value::DeviceFunction(module, name) => self.call_device(&module, &name, args, *span),
                         _ => Err(self.error("expression is not callable", *span)),
                     }
                 }
@@ -407,6 +426,15 @@ impl Interpreter {
             }
             Expr::Member { object, name, span } => {
                 match self.eval(object)? {
+                    Value::DeviceRoot => Ok(Value::DeviceModule(name.clone())),
+                    Value::DeviceModule(module) => {
+                        const METHODS: &[&str] = &["is_supported", "is_available", "capabilities", "status", "permission", "request_permission"];
+                        if METHODS.contains(&name.as_str()) {
+                            Ok(Value::DeviceFunction(module.clone(), name.clone()))
+                        } else {
+                            Err(self.error(&format!("device module has no method '{name}'"), *span))
+                        }
+                    }
                     Value::Module(module) => {
                         let module_ref = module.borrow();
                         if let Some(binding) = module_ref.scopes.first().and_then(|scope| scope.get(name)) {
@@ -423,6 +451,47 @@ impl Interpreter {
         }
     }
 
+    fn call_device(&self, module: &str, method: &str, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+        if !args.is_empty() {
+            return Err(self.error(&format!("device.{module}.{method}() expects no arguments"), span));
+        }
+        let name = format!("device.{module}");
+        let capability = self.device_registry.capability(&name);
+        match method {
+            "is_supported" => Ok(Value::Boolean(capability.supported)),
+            "is_available" => Ok(Value::Boolean(capability.supported && capability.available)),
+            "capabilities" | "status" => {
+                let mut values = HashMap::new();
+                values.insert("module".into(), Value::String(capability.module));
+                values.insert("platform".into(), Value::String(format!("{:?}", capability.platform).to_lowercase()));
+                values.insert("supported".into(), Value::Boolean(capability.supported));
+                values.insert("available".into(), Value::Boolean(capability.available));
+                values.insert("permission".into(), Value::String(permission_name(capability.permission).into()));
+                values.insert("features".into(), Value::List(Rc::new(RefCell::new(
+                    capability.features.into_iter().map(Value::String).collect()
+                ))));
+                values.insert("limitations".into(), Value::List(Rc::new(RefCell::new(
+                    capability.limitations.into_iter().map(Value::String).collect()
+                ))));
+                Ok(Value::Dict(Rc::new(RefCell::new(values))))
+            }
+            "permission" => {
+                if !capability.supported {
+                    return Ok(Value::String("unknown".into()));
+                }
+                let state = self.device_registry.permission_state(&name)
+                    .map_err(|error| self.error(&error.to_string(), span))?;
+                Ok(Value::String(permission_name(state).into()))
+            }
+            "request_permission" => {
+                let state = self.device_registry.request_permission(&name)
+                    .map_err(|error| self.error(&error.to_string(), span))?;
+                Ok(Value::String(permission_name(state).into()))
+            }
+            _ => Err(self.error(&format!("unknown device method '{method}'"), span)),
+        }
+    }
+
     fn call(&mut self, name: &str, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
         match name {
             "type" => {
@@ -432,7 +501,8 @@ impl Interpreter {
                     Value::String(_) => "string", Value::Boolean(_) => "bool",
                     Value::List(_) => "list", Value::Dict(_) => "dict",
                     Value::Tuple(_) => "tuple", Value::Module(_) => "module",
-                    Value::FunctionRef(_, _) => "function", Value::Nil => "nil",
+                    Value::FunctionRef(_, _) => "function", Value::DeviceRoot => "device_namespace",
+                    Value::DeviceModule(_) => "device_module", Value::DeviceFunction(_, _) => "function", Value::Nil => "nil",
                 };
                 Ok(Value::String(kind.to_owned()))
             }
@@ -871,6 +941,17 @@ fn decode_string(raw: &str) -> Option<String> {
         });
     }
     Some(result)
+}
+
+fn permission_name(state: PermissionState) -> &'static str {
+    match state {
+        PermissionState::NotRequired => "not_required",
+        PermissionState::NotRequested => "not_requested",
+        PermissionState::Granted => "granted",
+        PermissionState::Denied => "denied",
+        PermissionState::Restricted => "restricted",
+        PermissionState::Unknown => "unknown",
+    }
 }
 
 #[cfg(test)]
