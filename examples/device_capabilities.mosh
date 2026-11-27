@@ -23,3 +23,16 @@ else:
     print(device.battery.capabilities()["limitations"])
 
 print(device.wifi_direct.is_supported())
+
+if device.memory.is_supported():
+    let memory = device.memory.read()
+    print(memory["total_bytes"])
+    print(memory["available_bytes"])
+    print(memory["swap_total_bytes"])
+
+if device.cpu.is_supported():
+    let cpu = device.cpu.read()
+    print(cpu["model"])
+    print(cpu["architecture"])
+    print(cpu["logical_cores"])
+    print(cpu["frequency_mhz"])
