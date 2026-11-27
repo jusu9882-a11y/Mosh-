@@ -603,6 +603,7 @@ impl Interpreter {
             Value::List(v) => !v.borrow().is_empty(),
             Value::Dict(v) => !v.borrow().is_empty(),
             Value::Tuple(v) => !v.is_empty(),
+            Value::Module(_) | Value::FunctionRef(_, _) => true,
             Value::Nil => false,
         }
     }
