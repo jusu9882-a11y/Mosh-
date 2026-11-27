@@ -247,6 +247,9 @@ impl Analyzer {
                     self.error(format!("use of undefined name '{name}'"), *span);
                 }
             }
+            Expr::List { elements, .. } => {
+                for element in elements { self.expression(element); }
+            }
             Expr::Unary { operand, .. } => self.expression(operand),
             Expr::Binary { left, right, .. } => {
                 self.expression(left);
