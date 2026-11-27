@@ -580,7 +580,7 @@ mod tests {
 
     #[test]
     fn decodes_string_escapes_and_concatenates() {
-        assert_eq!(run("let name = \"Mo\\nsh\"\nname + \"!\"\n").unwrap(), Value::String("Mo\nsh!".into()));
+        assert_eq!(run("let name = \"Mo\nsh\"\nname + \"!\"\n").unwrap(), Value::String("Mo\nsh!".into()));
     }
 
     #[test]
@@ -647,27 +647,26 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn filesystem_builtins_use_the_real_filesystem() {
         let root = std::env::temp_dir().join(format!("mosh-io-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let dir = root.join("nested");
         let file = dir.join("notes.txt");
         let source = format!(
-            "create_dir(\"{}\")\\nwrite_text(\"{}\", \"hello\")\\nappend_text(\"{}\", \" mosh\")\\nread_text(\"{}\")\\n",
+            "create_dir(\"{}\")\nwrite_text(\"{}\", \"hello\")\nappend_text(\"{}\", \" mosh\")\nread_text(\"{}\")\n",
             dir.display(), file.display(), file.display(), file.display()
         );
         assert_eq!(run(&source).unwrap(), Value::String("hello mosh".into()));
-        let exists = format!("file_exists(\"{}\")\\n", file.display());
+        let exists = format!("file_exists(\"{}\")\n", file.display());
         assert_eq!(run(&exists).unwrap(), Value::Boolean(true));
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn filesystem_builtins_report_io_and_argument_errors() {
-        assert!(run("read_text(\"/mosh-path-that-does-not-exist/file.txt\")\\n").unwrap_err().message.contains("read_text() failed"));
-        assert!(run("write_text(1, \"x\")\\n").unwrap_err().message.contains("must be strings"));
-        assert!(run("file_exists()\\n").unwrap_err().message.contains("expects one path"));
+        assert!(run("read_text(\"/mosh-path-that-does-not-exist/file.txt\")\n").unwrap_err().message.contains("read_text() failed"));
+        assert!(run("write_text(1, \"x\")\n").unwrap_err().message.contains("must be strings"));
+        assert!(run("file_exists()\n").unwrap_err().message.contains("expects one path"));
     }
 
     #[test]
