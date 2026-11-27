@@ -88,6 +88,10 @@ pub enum Expr {
         value: bool,
         span: Span,
     },
+    List {
+        elements: Vec<Expr>,
+        span: Span,
+    },
     Unary {
         operator: TokenKind,
         operand: Box<Expr>,
@@ -557,6 +561,18 @@ impl<'a> Parser<'a> {
                 let expr = self.expression(0)?;
                 self.expect(TokenKind::RightParen, "expected ')' after expression")?;
                 Ok(expr)
+            }
+            TokenKind::LeftBracket => {
+                let mut elements = Vec::new();
+                if !self.check(&TokenKind::RightBracket) {
+                    loop {
+                        elements.push(self.expression(0)?);
+                        if !self.take(&TokenKind::Comma) { break; }
+                        if self.check(&TokenKind::RightBracket) { break; }
+                    }
+                }
+                let close = self.expect(TokenKind::RightBracket, "expected ']' after list elements")?.span;
+                Ok(Expr::List { elements, span: join(token.span, close) })
             }
             _ => Err(ParseError {
                 message: format!("expected expression, found {:?}", token.kind),
