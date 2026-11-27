@@ -3,6 +3,7 @@ use crate::parser::{Expr, Program, Stmt};
 use std::collections::HashMap;
 use std::fmt;
 use std::io::{self, Write};
+use std::fs;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -382,6 +383,30 @@ impl Interpreter {
                 for value in values.iter() { let Value::String(part) = value else { return Err(self.error("join() list must contain only strings", span)); }; parts.push(part.as_str()); }
                 Ok(Value::String(parts.join(separator)))
             }
+            "read_text" => {
+                if args.len() != 1 { return Err(self.error("read_text() expects one path string", span)); }
+                let Value::String(path) = &args[0] else { return Err(self.error("read_text() path must be a string", span)); };
+                fs::read_to_string(path).map(Value::String).map_err(|e| self.error(&format!("read_text() failed for '{path}': {e}"), span))
+            }
+            "write_text" | "append_text" => {
+                if args.len() != 2 { return Err(self.error("write_text()/append_text() expect a path and text", span)); }
+                let (Value::String(path), Value::String(contents)) = (&args[0], &args[1]) else { return Err(self.error("file path and contents must be strings", span)); };
+                let result = if name == "write_text" { fs::write(path, contents) } else {
+                    use std::fs::OpenOptions;
+                    OpenOptions::new().create(true).append(true).open(path).and_then(|mut file| file.write_all(contents.as_bytes()))
+                };
+                result.map(|_| Value::Nil).map_err(|e| self.error(&format!("{name}() failed for '{path}': {e}"), span))
+            }
+            "file_exists" => {
+                if args.len() != 1 { return Err(self.error("file_exists() expects one path string", span)); }
+                let Value::String(path) = &args[0] else { return Err(self.error("file_exists() path must be a string", span)); };
+                Ok(Value::Boolean(std::path::Path::new(path).exists()))
+            }
+            "create_dir" => {
+                if args.len() != 1 { return Err(self.error("create_dir() expects one path string", span)); }
+                let Value::String(path) = &args[0] else { return Err(self.error("create_dir() path must be a string", span)); };
+                fs::create_dir_all(path).map(|_| Value::Nil).map_err(|e| self.error(&format!("create_dir() failed for '{path}': {e}"), span))
+            }
             "print" => {
                 for (index, value) in args.iter().enumerate() {
                     if index > 0 { print!(" "); }
@@ -619,6 +644,30 @@ mod tests {
     fn rejects_invalid_string_operation_arguments() {
         assert!(run("split(\"abc\", \"\")\n").unwrap_err().message.contains("cannot be empty"));
         assert!(run("join([\"a\", 2], \",\" )\n").unwrap_err().message.contains("only strings"));
+    }
+
+    #[test]
+    #[test]
+    fn filesystem_builtins_use_the_real_filesystem() {
+        let root = std::env::temp_dir().join(format!("mosh-io-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("nested");
+        let file = dir.join("notes.txt");
+        let source = format!(
+            "create_dir(\"{}\")\\nwrite_text(\"{}\", \"hello\")\\nappend_text(\"{}\", \" mosh\")\\nread_text(\"{}\")\\n",
+            dir.display(), file.display(), file.display(), file.display()
+        );
+        assert_eq!(run(&source).unwrap(), Value::String("hello mosh".into()));
+        let exists = format!("file_exists(\"{}\")\\n", file.display());
+        assert_eq!(run(&exists).unwrap(), Value::Boolean(true));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn filesystem_builtins_report_io_and_argument_errors() {
+        assert!(run("read_text(\"/mosh-path-that-does-not-exist/file.txt\")\\n").unwrap_err().message.contains("read_text() failed"));
+        assert!(run("write_text(1, \"x\")\\n").unwrap_err().message.contains("must be strings"));
+        assert!(run("file_exists()\\n").unwrap_err().message.contains("expects one path"));
     }
 
     #[test]
