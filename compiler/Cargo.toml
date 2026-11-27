@@ -2,7 +2,7 @@
 name = "moshc"
 version = "0.1.0"
 edition = "2021"
-description = "The Mosh programming language interpreter and compiler"
+description = "The Mosh interpreted programming language runtime"
 license = "UNLICENSED"
 
 [[bin]]

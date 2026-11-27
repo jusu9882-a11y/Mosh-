@@ -1,57 +1,51 @@
 # MOSH
 
-**Mosh is an interpreter-first general-purpose programming language, implemented in Rust.**
+**Mosh is a general-purpose interpreted programming language implemented in Rust.**
 
-Mosh is being developed incrementally: start with a practical interpreted language, then add stronger static analysis, a bytecode virtual machine, and eventually native compilation and low-level systems capabilities. The `.mosh` source extension and `@` comment marker are part of the language contract.
+Mosh source files use the `.mosh` extension. The `@` character starts a comment. Mosh currently executes programs directly with a tree-walk interpreter; native compilation is not part of the current product.
 
-## Current direction
+## Language direction
 
+- **Execution model:** interpreter only
 - **Implementation language:** Rust
-- **Initial execution engine:** Tree-walk interpreter
 - **Source files:** `.mosh`
 - **Comments:** `@`
-- **Current values:** integers, floats, strings, booleans, nil, mutable lists, string-keyed dictionaries, and immutable tuples
-- **Later execution engines:** bytecode VM, then optional LLVM native backend
-- **Long-term type and memory model:** static typing, ownership and borrowing, with explicit unsafe low-level facilities
+- **Runtime values:** integers, floats, strings, booleans, nil, mutable lists, string-keyed dictionaries, and immutable tuples
+- **Current priority:** a complete, dependable interpreter, useful standard library, module system, REPL, diagnostics, and tests
 
-The interpreter is the first usable execution path. Existing semantic analysis, type checking, and MIR work are retained; they are not yet a complete replacement for interpreter execution.
+There is no LLVM backend, bytecode VM, native executable output, or compiler command in the current Mosh release direction. Existing lexer, parser, semantic-analysis, and type-checking code is used to support interpretation and diagnostics; it must not be described as native compilation.
 
-## Current implementation status
+## Current interpreter features
 
-### Interpreter
-
-- Execute a `.mosh` file with `mosh run file.mosh`.
-- Start an interactive REPL with `mosh` or `mosh repl`, including multi-line compound blocks submitted with a blank line.
-- Variables: `let` and `mut`.
+- Run a `.mosh` file with `mosh run file.mosh`.
+- Interactive REPL with multi-line compound blocks.
+- Variables declared with `let` and `mut`.
 - Integers, floats, strings, booleans, and nil.
 - Arithmetic, comparisons, and boolean operators.
 - `if` / `else`, `while`, and `for` loops.
 - Named functions and return values.
 - Built-ins: `print()`, `input()`, `len()`, `push()`, and `pop()`.
-- List literals, nested lists, positive/negative indexing, indexed assignment, and list/string iteration.
-- Dictionary literals with string keys, lookup, insertion/update, deterministic key iteration, and `keys()`, `has_key()`, and `remove()` built-ins.
-- Tuple literals, including empty and single-element tuples, indexing, negative indexing, iteration, and `len()`.
+- Mutable and nested lists, positive/negative indexing, and indexed assignment.
+- String-keyed dictionaries with lookup, insertion/update, deterministic key iteration, `keys()`, `has_key()`, and `remove()`.
+- Immutable tuples, including empty and single-element tuples, indexing, iteration, and `len()`.
 - String helpers: `upper()`, `lower()`, `trim()`, `trim_start()`, `trim_end()`, `contains()`, `starts_with()`, `ends_with()`, `replace()`, `split()`, and `join()`.
-- Real filesystem helpers: `read_text()`, `write_text()`, `append_text()`, `file_exists()`, and `create_dir()`; paths are relative to the process working directory unless absolute.
-- **Filesystem security:** these functions access the host filesystem using the permissions of the Mosh process. The interpreter is not sandboxed; do not run untrusted `.mosh` programs.
-- Interpreter exceptions: `try:` / `catch error:` handles runtime failures, while `raise value` raises an explicit runtime error. The caught `error` binding is a string containing the error message and source location. Errors propagate through function calls until caught.
-- Runtime diagnostics with source line and column.
-- A loop iteration safety limit.
+- Filesystem helpers: `read_text()`, `write_text()`, `append_text()`, `file_exists()`, and `create_dir()`.
+- Runtime exceptions with `try:`, `catch error:`, and `raise value`.
+- Top-level module imports using `import "module.mosh" as module`, with isolated namespaces, relative paths from the importing file, successful-module caching, and circular-import detection.
+- Runtime diagnostics with source line and column, plus a loop iteration safety limit.
 
-### Compiler foundation
-
-The Rust lexer, parser, semantic analyzer, primitive type checker, and MIR infrastructure remain in the repository. The current MIR backend does not yet lower list literals or the full interpreter feature set. Interpreter execution and MIR/native compilation are distinct development tracks.
+**Filesystem and import security:** filesystem built-ins and imported modules use the operating-system permissions of the Mosh process. Mosh is not a sandbox; only run trusted source files and modules.
 
 ## Quick start
 
-Build the interpreter from the compiler directory:
+Build the interpreter:
 
 ```sh
 cd compiler
 cargo build --bin mosh
 ```
 
-Run a source file:
+Run a program:
 
 ```sh
 cargo run --bin mosh -- run ../examples/collections.mosh
@@ -59,24 +53,29 @@ cargo run --bin mosh -- run ../examples/dictionaries.mosh
 cargo run --bin mosh -- run ../examples/tuples_strings.mosh
 ```
 
-Start the interactive shell:
+Start the REPL:
 
 ```sh
 cargo run --bin mosh
 ```
 
-Other compiler-inspection commands currently available include `mosh lex`, `mosh parse`, `mosh check`, and `mosh mir`. The checker and MIR backend support a smaller subset than the interpreter.
+## CLI
 
-## Language example
+- `mosh` or `mosh repl` — start the interactive interpreter.
+- `mosh run file.mosh` — execute a source file.
+- `mosh check file.mosh` — run the currently supported semantic and type diagnostics; interpreter-only imports are explicitly rejected by this command.
+- `mosh lex file.mosh` — inspect tokens.
+- `mosh parse file.mosh` — inspect the parsed syntax tree.
+- `mosh --version` — print the interpreter version.
+
+## Example
 
 ```mosh
 @ A first Mosh collection program
 
 mut fruits = ["Mango", "Apple", "Orange"]
-
 print(fruits[0])
 print(len(fruits))
-
 push(fruits, "Banana")
 
 for fruit in fruits:
@@ -85,25 +84,22 @@ for fruit in fruits:
 mut total = 0
 for number in [1, 2, 3, 4]:
     total = total + number
-
 print(total)
 ```
 
 ## Development principles
 
-1. Make each feature work end-to-end before announcing it.
-2. Keep the interpreter executable and its regression tests green as the language grows.
-3. Preserve the existing lexer/parser and compiler work where practical.
-4. Document differences between interpreter support and compiler/MIR support.
-5. Add static types, ownership, bytecode, LLVM, and low-level facilities in deliberate stages.
-6. Never claim a feature is implemented until code and tests verify it.
+1. The interpreter is the product; keep it usable as features grow.
+2. Implement features end-to-end with regression tests.
+3. Keep runtime behavior, diagnostics, and documentation consistent.
+4. Clearly distinguish implemented features from planned work.
+5. Do not claim a feature is complete until code and tests verify it.
 
 ## Repository layout
 
-- `compiler/` — Rust interpreter and compiler foundation
-- `docs/SPECIFICATION.md` — language architecture and design contract
-- `docs/LEXER.md` — lexical rules
-- `docs/PARSER.md` — grammar and parser behavior
+- `compiler/` — Rust implementation of the interpreter, lexer, parser, and diagnostics.
+- `examples/` — runnable Mosh programs.
+- `docs/` — language specification and design documentation.
 
 ## License
 

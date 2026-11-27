@@ -1,6 +1,5 @@
 mod interpreter;
 mod lexer;
-mod mir;
 mod parser;
 mod semantic;
 mod typecheck;
@@ -13,7 +12,7 @@ use std::process::ExitCode;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn print_help() {
-    println!("Mosh {VERSION} — interpreted language and compiler tools");
+    println!("Mosh {VERSION} — interpreted programming language");
     println!();
     println!("USAGE:");
     println!("    mosh [repl]");
@@ -21,11 +20,11 @@ fn print_help() {
     println!("    mosh check <source.mosh>");
     println!("    mosh lex <source.mosh>");
     println!("    mosh parse <source.mosh>");
-    println!("    mosh mir <source.mosh>");
     println!("    mosh --version");
     println!();
-    println!("The interpreter executes supported Mosh source directly.");
-    println!("The check and mir commands expose the existing static compiler pipeline.");
+    println!("Mosh runs source files directly in its interpreter.");
+    println!("No native compiler or executable-generation command is provided.");
+    println!("The check command runs the current semantic and type diagnostics.");
 }
 
 fn read_source(path: &str) -> Result<String, ExitCode> {
@@ -46,7 +45,7 @@ fn parse_program(path: &str, tokens: &[lexer::Token]) -> Option<parser::Program>
     }
 }
 
-fn compile_frontend(path: &str, source: &str) -> Option<parser::Program> {
+fn parse_source(path: &str, source: &str) -> Option<parser::Program> {
     let tokens = match lexer::tokenize(source) {
         Ok(tokens) => tokens,
         Err(error) => { eprintln!("mosh: {path}: {error}"); return None; }
@@ -60,8 +59,9 @@ fn run_file(path: &str) -> ExitCode {
         return ExitCode::from(2);
     }
     let source = match read_source(path) { Ok(s) => s, Err(code) => return code };
-    let Some(program) = compile_frontend(path, &source) else { return ExitCode::from(1); };
+    let Some(program) = parse_source(path, &source) else { return ExitCode::from(1); };
     let mut interpreter = interpreter::Interpreter::new();
+    interpreter.set_source_path(path);
     match interpreter.execute(&program) {
         Ok(_) => ExitCode::SUCCESS,
         Err(error) => { eprintln!("mosh: {path}: runtime error: {error}"); ExitCode::from(1) }
@@ -114,7 +114,7 @@ fn run_repl() -> ExitCode {
             }
         }
 
-        let Some(program) = compile_frontend("<repl>", &source) else { continue; };
+        let Some(program) = parse_source("<repl>", &source) else { continue; };
         match interpreter.execute(&program) {
             Ok(_) => {}
             Err(error) => eprintln!("mosh: runtime error: {error}"),
@@ -140,7 +140,7 @@ fn run_lexer(path: &str) -> ExitCode {
 
 fn run_parser(path: &str) -> ExitCode {
     let source = match read_source(path) { Ok(s) => s, Err(code) => return code };
-    match compile_frontend(path, &source) {
+    match parse_source(path, &source) {
         Some(program) => { println!("{program:#?}"); ExitCode::SUCCESS }
         None => ExitCode::from(1),
     }
@@ -148,33 +148,13 @@ fn run_parser(path: &str) -> ExitCode {
 
 fn run_checker(path: &str) -> ExitCode {
     let source = match read_source(path) { Ok(s) => s, Err(code) => return code };
-    let Some(program) = compile_frontend(path, &source) else { return ExitCode::from(1); };
+    let Some(program) = parse_source(path, &source) else { return ExitCode::from(1); };
     if let Err(errors) = semantic::analyze(&program) {
         for error in errors { eprintln!("mosh: {path}: {error}"); }
         return ExitCode::from(1);
     }
     match typecheck::check(&program) {
         Ok(()) => { println!("{path}: semantic and type checks passed"); ExitCode::SUCCESS }
-        Err(errors) => {
-            for error in errors { eprintln!("mosh: {path}: {error}"); }
-            ExitCode::from(1)
-        }
-    }
-}
-
-fn run_mir(path: &str) -> ExitCode {
-    let source = match read_source(path) { Ok(s) => s, Err(code) => return code };
-    let Some(program) = compile_frontend(path, &source) else { return ExitCode::from(1); };
-    if let Err(errors) = semantic::analyze(&program) {
-        for error in errors { eprintln!("mosh: {path}: {error}"); }
-        return ExitCode::from(1);
-    }
-    if let Err(errors) = typecheck::check(&program) {
-        for error in errors { eprintln!("mosh: {path}: {error}"); }
-        return ExitCode::from(1);
-    }
-    match mir::lower(&program) {
-        Ok(module) => { println!("{module:#?}"); ExitCode::SUCCESS }
         Err(errors) => {
             for error in errors { eprintln!("mosh: {path}: {error}"); }
             ExitCode::from(1)
@@ -199,10 +179,6 @@ fn main() -> ExitCode {
         Some("parse") => match args.next() {
             Some(path) => run_parser(&path),
             None => { eprintln!("mosh: 'parse' requires a source file"); ExitCode::from(2) }
-        },
-        Some("mir") => match args.next() {
-            Some(path) => run_mir(&path),
-            None => { eprintln!("mosh: 'mir' requires a source file"); ExitCode::from(2) }
         },
         Some("check") => match args.next() {
             Some(path) => run_checker(&path),

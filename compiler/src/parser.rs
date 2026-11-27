@@ -20,6 +20,7 @@ pub struct Program {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stmt {
+    Import { path: String, alias: String, span: Span },
     Function {
         name: String,
         params: Vec<Parameter>,
@@ -253,6 +254,7 @@ impl<'a> Parser<'a> {
 
     fn statement(&mut self) -> Result<Stmt, ParseError> {
         match self.kind() {
+            TokenKind::Import => self.import_stmt(),
             TokenKind::Function => self.function(),
             TokenKind::Let | TokenKind::Mut => self.binding(false),
             TokenKind::Return => self.return_stmt(),
@@ -266,6 +268,18 @@ impl<'a> Parser<'a> {
             }
             _ => self.assignment_or_expr(),
         }
+    }
+
+    fn import_stmt(&mut self) -> Result<Stmt, ParseError> {
+        let start = self.expect(TokenKind::Import, "expected 'import'")?.span;
+        let path_token = self.expect(TokenKind::String, "expected a quoted module path after 'import'")?.clone();
+        let path = decode_import_path(&path_token.lexeme).ok_or_else(|| ParseError {
+            message: "invalid module path string".into(),
+            span: path_token.span,
+        })?;
+        self.expect(TokenKind::As, "expected 'as' and a module alias")?;
+        let alias = self.identifier("expected module alias after 'as'")?;
+        Ok(Stmt::Import { path, alias, span: join(start, self.previous().span) })
     }
 
     fn function(&mut self) -> Result<Stmt, ParseError> {
@@ -433,7 +447,11 @@ impl<'a> Parser<'a> {
         while !self.check(&TokenKind::Dedent) && !self.check(&TokenKind::Eof) {
             match self.statement() {
                 Ok(statement) => {
-                    body.push(statement);
+                    if matches!(statement, Stmt::Import { .. }) {
+                        self.errors.push(ParseError { message: "imports are only allowed at the top level".into(), span: stmt_syntax_span(&statement) });
+                    } else {
+                        body.push(statement);
+                    }
                     if let Err(error) = self.statement_end() {
                         self.errors.push(error);
                         self.synchronize_statement();
@@ -759,6 +777,19 @@ fn precedence(kind: &TokenKind) -> Option<(u8, bool)> {
         _ => return None,
     };
     Some((p, false))
+}
+
+fn decode_import_path(raw: &str) -> Option<String> {
+    let quote = raw.chars().next()?;
+    let inner = raw.strip_prefix(quote)?.strip_suffix(quote)?;
+    if inner.is_empty() || inner.contains(char::from(92)) { return None; }
+    Some(inner.to_owned())
+}
+
+fn stmt_syntax_span(stmt: &Stmt) -> Span {
+    match stmt {
+        Stmt::Import { span, .. } | Stmt::Function { span, .. } | Stmt::Let { span, .. } | Stmt::Return { span, .. } | Stmt::Raise { span, .. } | Stmt::Try { span, .. } | Stmt::If { span, .. } | Stmt::While { span, .. } | Stmt::For { span, .. } | Stmt::Assign { span, .. } | Stmt::Expression { span, .. } => *span,
+    }
 }
 
 fn expr_span(expr: &Expr) -> Span {
