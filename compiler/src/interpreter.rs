@@ -1352,6 +1352,31 @@ message
     }
 
     #[test]
+    fn memory_ram_alias_and_cpu_reads_use_injected_procfs_backend() {
+        let root = std::env::temp_dir().join(format!("mosh-interpreter-proc-{}", std::process::id()));
+        let power = root.join("power");
+        let proc = root.join("proc");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&power).unwrap();
+        fs::create_dir_all(&proc).unwrap();
+        fs::write(proc.join("meminfo"), "MemTotal: 8192000 kB\nMemFree: 1024000 kB\nMemAvailable: 2048000 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n").unwrap();
+        fs::write(proc.join("cpuinfo"), "processor : 0\nmodel name : Mosh Test CPU\nprocessor : 1\n").unwrap();
+
+        let backend = std::sync::Arc::new(crate::device::SysfsBackend::with_paths(
+            &power, &proc, crate::device::Platform::Linux
+        ));
+        let mut interpreter = Interpreter::with_device_backend(backend);
+        let source = r#"let memory = device.memory.read()
+let ram = device.ram.read()
+let cpu = device.cpu.read()
+memory["total_bytes"] + ram["available_bytes"] + cpu["logical_cores"]
+"#;
+        let program = parse(&tokenize(source).unwrap()).unwrap();
+        assert_eq!(interpreter.execute(&program).unwrap(), Value::Integer(10_485_760_002));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn reports_undefined_names() {
         assert!(run("unknown\n").unwrap_err().message.contains("undefined variable"));
     }
