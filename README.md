@@ -10,7 +10,7 @@ Mosh is being developed incrementally: start with a practical interpreted langua
 - **Initial execution engine:** Tree-walk interpreter
 - **Source files:** `.mosh`
 - **Comments:** `@`
-- **Current values:** integers, floats, strings, booleans, nil, mutable lists, and string-keyed dictionaries
+- **Current values:** integers, floats, strings, booleans, nil, mutable lists, string-keyed dictionaries, and immutable tuples
 - **Later execution engines:** bytecode VM, then optional LLVM native backend
 - **Long-term type and memory model:** static typing, ownership and borrowing, with explicit unsafe low-level facilities
 
@@ -30,6 +30,8 @@ The interpreter is the first usable execution path. Existing semantic analysis, 
 - Built-ins: `print()`, `input()`, `len()`, `push()`, and `pop()`.
 - List literals, nested lists, positive/negative indexing, indexed assignment, and list/string iteration.
 - Dictionary literals with string keys, lookup, insertion/update, deterministic key iteration, and `keys()`, `has_key()`, and `remove()` built-ins.
+- Tuple literals, including empty and single-element tuples, indexing, negative indexing, iteration, and `len()`.
+- String helpers: `upper()`, `lower()`, `trim()`, `trim_start()`, `trim_end()`, `contains()`, `starts_with()`, `ends_with()`, `replace()`, `split()`, and `join()`.
 - Runtime diagnostics with source line and column.
 - A loop iteration safety limit.
 
@@ -51,6 +53,7 @@ Run a source file:
 ```sh
 cargo run --bin mosh -- run ../examples/collections.mosh
 cargo run --bin mosh -- run ../examples/dictionaries.mosh
+cargo run --bin mosh -- run ../examples/tuples_strings.mosh
 ```
 
 Start the interactive shell:
