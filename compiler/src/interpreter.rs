@@ -596,6 +596,32 @@ mod tests {
     }
 
     #[test]
+    fn supports_tuple_values_indexing_iteration_and_length() {
+        assert_eq!(run("let pair = (10, \"Mosh\")\npair[1]\n").unwrap(), Value::String("Mosh".into()));
+        assert_eq!(run("let pair = (10, 20, 30)\npair[-1]\n").unwrap(), Value::Integer(30));
+        assert_eq!(run("let pair = (2, 3, 4)\nmut total = 0\nfor value in pair:\n    total = total + value\ntotal + len(pair)\n").unwrap(), Value::Integer(12));
+        assert_eq!(run("let empty = ()\nlen(empty)\n").unwrap(), Value::Integer(0));
+    }
+
+    #[test]
+    fn supports_string_transformations_search_replace_split_and_join() {
+        assert_eq!(run("upper(\"mosh\")\n").unwrap(), Value::String("MOSH".into()));
+        assert_eq!(run("lower(\"MOSH\")\n").unwrap(), Value::String("mosh".into()));
+        assert_eq!(run("trim(\"  hello  \")\n").unwrap(), Value::String("hello".into()));
+        assert_eq!(run("replace(\"one fish\", \"fish\", \"bird\")\n").unwrap(), Value::String("one bird".into()));
+        assert_eq!(run("let words = split(\"red,green,blue\", \",\" )\njoin(words, \"-\")\n").unwrap(), Value::String("red-green-blue".into()));
+        assert_eq!(run("contains(\"Mosh language\", \"language\")\n").unwrap(), Value::Boolean(true));
+        assert_eq!(run("starts_with(\"Mosh\", \"Mo\")\n").unwrap(), Value::Boolean(true));
+        assert_eq!(run("ends_with(\"Mosh\", \"sh\")\n").unwrap(), Value::Boolean(true));
+    }
+
+    #[test]
+    fn rejects_invalid_string_operation_arguments() {
+        assert!(run("split(\"abc\", \"\")\n").unwrap_err().message.contains("cannot be empty"));
+        assert!(run("join([\"a\", 2], \",\" )\n").unwrap_err().message.contains("only strings"));
+    }
+
+    #[test]
     fn reports_undefined_names() {
         assert!(run("unknown\n").unwrap_err().message.contains("undefined variable"));
     }
