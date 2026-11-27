@@ -253,7 +253,7 @@ impl<'a> Parser<'a> {
         match self.kind() {
             TokenKind::Function => self.function(),
             TokenKind::Let | TokenKind::Mut => self.binding(false),
-            TokenKind::Return => self.return_stmt(),
+            TokenKind::Return => self.return_stmt(),\n            TokenKind::Raise => self.raise_stmt(),\n            TokenKind::Try => self.try_stmt(),
             TokenKind::If => self.if_stmt(),
             TokenKind::While => self.while_stmt(),
             TokenKind::For => self.for_stmt(),
@@ -359,6 +359,22 @@ impl<'a> Parser<'a> {
             value,
             span: join(start, end),
         })
+    }
+
+    fn raise_stmt(&mut self) -> Result<Stmt, ParseError> {
+        let start = self.expect(TokenKind::Raise, "expected 'raise'")?.span;
+        if self.at_statement_end() { return Err(self.error("'raise' requires an error value")); }
+        let value = self.expression(0)?;
+        Ok(Stmt::Raise { span: join(start, expr_span(&value)), value })
+    }
+
+    fn try_stmt(&mut self) -> Result<Stmt, ParseError> {
+        let start = self.expect(TokenKind::Try, "expected 'try'")?.span;
+        let body = self.block()?;
+        self.expect(TokenKind::Catch, "expected 'catch' after try block")?;
+        let catch_name = self.identifier("expected error variable after 'catch'")?;
+        let catch_body = self.block()?;
+        Ok(Stmt::Try { body, catch_name, catch_body, span: join(start, self.previous().span) })
     }
 
     fn if_stmt(&mut self) -> Result<Stmt, ParseError> {
