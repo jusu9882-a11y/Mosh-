@@ -35,7 +35,6 @@ jobs:
       - name: Smoke-test multiline REPL
         shell: bash
         run: |
-          output=$(printf 'mut n = 0\\nwhile n < 2:\\n    n = n + 1\\n\\nn\\n:quit\\n' | cargo run --quiet --bin mosh)
-          printf '%s\\n' "$output"
-          grep -q '^2
- <<< "$output"
+          output=$(printf 'mut n = 0\nwhile n < 2:\n    n = n + 1\n\nn\n:quit\n' | cargo run --quiet --bin mosh)
+          printf '%s\n' "$output"
+          grep -q '^2$' <<< "$output"
