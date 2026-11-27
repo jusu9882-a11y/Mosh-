@@ -30,6 +30,7 @@ There is no LLVM backend, bytecode VM, native executable output, or compiler com
 - Mutable and nested lists, positive/negative indexing, and indexed assignment.
 - String-keyed dictionaries with lookup, insertion/update, deterministic key iteration, `keys()`, `has_key()`, and `remove()`.
 - Immutable tuples, including empty and single-element tuples, indexing, iteration, and `len()`.
+- Collection helpers: `sorted()` returns a sorted copy of a list or tuple, `reverse()` returns a reversed copy (or reversed string), and `values()` returns dictionary values in sorted-key order.
 - String helpers: `upper()`, `lower()`, `trim()`, `trim_start()`, `trim_end()`, `contains()`, `starts_with()`, `ends_with()`, `replace()`, `split()`, and `join()`.
 - Filesystem helpers: `read_text()`, `write_text()`, `append_text()`, `file_exists()`, and `create_dir()`.
 - Path helpers: `path_join()`, `is_file()`, `is_dir()`, `file_size()`, `list_dir()` (sorted names), `current_dir()`, and `absolute_path()`.
