@@ -49,6 +49,8 @@ jobs:
         run: cargo run --bin mosh -- run ../examples/standard_library.mosh
       - name: Run collection helpers example
         run: cargo run --bin mosh -- run ../examples/collection_helpers.mosh
+      - name: Run device capability example
+        run: cargo run --bin mosh -- run ../examples/device_capabilities.mosh
       - name: Smoke-test multiline REPL
         shell: bash
         run: |
