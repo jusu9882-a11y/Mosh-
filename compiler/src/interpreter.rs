@@ -460,7 +460,7 @@ impl Interpreter {
             }
             "abs" => {
                 if args.len() != 1 { return Err(self.error("abs() expects exactly one number", span)); }
-                match args[0] {
+                match &args[0] {
                     Value::Integer(value) => value.checked_abs().map(Value::Integer).ok_or_else(|| self.error("abs() integer overflow", span)),
                     Value::Float(value) => Ok(Value::Float(value.abs())),
                     _ => Err(self.error("abs() argument must be a number", span)),
@@ -468,7 +468,7 @@ impl Interpreter {
             }
             "sqrt" | "floor" | "ceil" | "round" => {
                 if args.len() != 1 { return Err(self.error(&format!("{name}() expects exactly one number"), span)); }
-                let value = match args[0] { Value::Integer(v) => v as f64, Value::Float(v) => v, _ => return Err(self.error(&format!("{name}() argument must be a number"), span)) };
+                let value = match &args[0] { Value::Integer(v) => *v as f64, Value::Float(v) => *v, _ => return Err(self.error(&format!("{name}() argument must be a number"), span) };
                 if name == "sqrt" && value < 0.0 { return Err(self.error("sqrt() cannot accept a negative number", span)); }
                 let result = match name { "sqrt" => value.sqrt(), "floor" => value.floor(), "ceil" => value.ceil(), _ => value.round() };
                 if !result.is_finite() { return Err(self.error(&format!("{name}() result is not finite"), span)); }
@@ -478,10 +478,9 @@ impl Interpreter {
                 if args.len() != 2 { return Err(self.error("pow() expects two numbers", span)); }
                 match (&args[0], &args[1]) {
                     (Value::Integer(base), Value::Integer(exponent)) if *exponent >= 0 && *exponent <= u32::MAX as i64 => base.checked_pow(*exponent as u32).map(Value::Integer).ok_or_else(|| self.error("pow() integer overflow", span)),
-                    (Value::Integer(_), Value::Integer(exponent)) if *exponent < 0 => {
-                        let base = match args[0] { Value::Integer(v) => v as f64, _ => unreachable!() };
-                        if base == 0.0 { return Err(self.error("pow() division by zero", span)); }
-                        Ok(Value::Float(base.powf(*exponent as f64)))
+                    (Value::Integer(base), Value::Integer(exponent)) if *exponent < 0 => {
+                        if *base == 0 { return Err(self.error("pow() division by zero", span)); }
+                        Ok(Value::Float((*base as f64).powf(*exponent as f64)))
                     }
                     (Value::Integer(a), Value::Float(b)) => Ok(Value::Float((*a as f64).powf(*b))),
                     (Value::Float(a), Value::Integer(b)) => Ok(Value::Float(a.powf(*b as f64))),
@@ -491,17 +490,27 @@ impl Interpreter {
             }
             "min" | "max" => {
                 if args.is_empty() { return Err(self.error(&format!("{name}() expects at least one number"), span)); }
-                let mut numbers = Vec::with_capacity(args.len());
-                let mut has_float = false;
-                for value in &args {
-                    match value {
-                        Value::Integer(v) => numbers.push(*v as f64),
-                        Value::Float(v) => { numbers.push(*v); has_float = true; }
-                        _ => return Err(self.error(&format!("{name}() arguments must all be numbers"), span)),
+                let has_float = args.iter().any(|v| matches!(v, Value::Float(_)));
+                if !has_float {
+                    let mut numbers = Vec::with_capacity(args.len());
+                    for value in &args {
+                        let Value::Integer(number) = value else { return Err(self.error(&format!("{name}() arguments must all be numbers"), span)); };
+                        numbers.push(*number);
                     }
+                    let selected = if name == "min" { *numbers.iter().min().unwrap() } else { *numbers.iter().max().unwrap() };
+                    Ok(Value::Integer(selected))
+                } else {
+                    let mut numbers = Vec::with_capacity(args.len());
+                    for value in &args {
+                        match value {
+                            Value::Integer(v) => numbers.push(*v as f64),
+                            Value::Float(v) => numbers.push(*v),
+                            _ => return Err(self.error(&format!("{name}() arguments must all be numbers"), span)),
+                        }
+                    }
+                    let selected = if name == "min" { numbers.into_iter().fold(f64::INFINITY, f64::min) } else { numbers.into_iter().fold(f64::NEG_INFINITY, f64::max) };
+                    Ok(Value::Float(selected))
                 }
-                let selected = if name == "min" { numbers.into_iter().fold(f64::INFINITY, f64::min) } else { numbers.into_iter().fold(f64::NEG_INFINITY, f64::max) };
-                if has_float { Ok(Value::Float(selected)) } else { Ok(Value::Integer(selected as i64)) }
             }
             "sum" => {
                 if args.len() != 1 { return Err(self.error("sum() expects exactly one list or tuple", span)); }
