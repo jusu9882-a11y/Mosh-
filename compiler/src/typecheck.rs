@@ -691,7 +691,7 @@ mod tests {
 
     #[test]
     fn accepts_device_namespace_calls_as_host_resolved_values() {
-        let tokens = crate::lexer::tokenize("device.camera.is_supported()\\n").unwrap();
+        let tokens = crate::lexer::tokenize("device.camera.is_supported()\n").unwrap();
         let program = crate::parser::parse(&tokens).unwrap();
         assert!(check(&program).is_ok());
     }
