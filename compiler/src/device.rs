@@ -8,6 +8,8 @@ use std::error::Error;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {
@@ -144,6 +146,145 @@ pub trait DeviceBackend: Send + Sync {
     fn capability(&self, module: &str) -> Capability;
     fn permission_state(&self, module: &str) -> Result<PermissionState, DeviceError>;
     fn request_permission(&self, module: &str) -> Result<PermissionState, DeviceError>;
+
+    fn read_battery(&self) -> Result<BatteryReading, DeviceError> {
+        Err(DeviceError::unsupported("device.battery", "read"))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BatteryReading {
+    pub present: bool,
+    pub capacity_percent: Option<f64>,
+    pub state: Option<String>,
+    pub voltage_mv: Option<f64>,
+    pub current_ma: Option<f64>,
+    pub temperature_c: Option<f64>,
+    pub technology: Option<String>,
+}
+
+/// Linux/Android sysfs battery adapter. It reads kernel-exposed power-supply
+/// attributes only; it never fabricates readings or prompts for permissions.
+#[derive(Debug, Clone)]
+pub struct SysfsBackend {
+    root: PathBuf,
+    platform: Platform,
+}
+
+impl SysfsBackend {
+    pub fn system() -> Self {
+        Self::with_root("/sys/class/power_supply", Platform::current())
+    }
+
+    pub fn with_root(root: impl Into<PathBuf>, platform: Platform) -> Self {
+        Self { root: root.into(), platform }
+    }
+
+    fn battery_path(&self) -> Option<PathBuf> {
+        if !matches!(self.platform, Platform::Android | Platform::Linux) {
+            return None;
+        }
+        let entries = fs::read_dir(&self.root).ok()?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let kind = fs::read_to_string(path.join("type")).ok()?;
+            if kind.trim().eq_ignore_ascii_case("battery") {
+                return Some(path);
+            }
+        }
+        None
+    }
+
+    fn read_optional_number(path: &Path, name: &str) -> Option<f64> {
+        fs::read_to_string(path.join(name)).ok()?.trim().parse::<f64>().ok()
+    }
+
+    fn read_optional_text(path: &Path, name: &str) -> Option<String> {
+        let value = fs::read_to_string(path.join(name)).ok()?;
+        let value = value.trim().to_owned();
+        (!value.is_empty()).then_some(value)
+    }
+}
+
+impl DeviceBackend for SysfsBackend {
+    fn platform(&self) -> Platform {
+        self.platform
+    }
+
+    fn capability(&self, module: &str) -> Capability {
+        if module != "device.battery" {
+            return Capability::unsupported(module, self.platform, "this sysfs adapter implements battery telemetry only");
+        }
+        let Some(path) = self.battery_path() else {
+            return Capability::unsupported(module, self.platform, "no readable battery device was detected through power_supply sysfs");
+        };
+        let present = Self::read_optional_text(&path, "present")
+            .map(|value| value == "1")
+            .unwrap_or(true);
+        let readable = path.join("capacity").is_file();
+        Capability {
+            module: module.into(),
+            platform: self.platform,
+            supported: true,
+            available: present && readable,
+            permission: PermissionState::NotRequired,
+            features: ["capacity", "charging_state", "voltage", "current", "temperature", "technology"]
+                .into_iter().filter(|feature| match *feature {
+                    "capacity" => path.join("capacity").is_file(),
+                    "charging_state" => path.join("status").is_file(),
+                    "voltage" => path.join("voltage_now").is_file(),
+                    "current" => path.join("current_now").is_file(),
+                    "temperature" => path.join("temp").is_file(),
+                    "technology" => path.join("technology").is_file(),
+                    _ => false,
+                }).map(str::to_owned).collect(),
+            limitations: if readable { Vec::new() } else { vec!["battery capacity is not readable from sysfs".into()] },
+        }
+    }
+
+    fn permission_state(&self, module: &str) -> Result<PermissionState, DeviceError> {
+        if !self.capability(module).supported {
+            return Err(DeviceError::unsupported(module, "permission_state"));
+        }
+        Ok(PermissionState::NotRequired)
+    }
+
+    fn request_permission(&self, module: &str) -> Result<PermissionState, DeviceError> {
+        if !self.capability(module).supported {
+            return Err(DeviceError::unsupported(module, "request_permission"));
+        }
+        Ok(PermissionState::NotRequired)
+    }
+
+    fn read_battery(&self) -> Result<BatteryReading, DeviceError> {
+        let path = self.battery_path().ok_or_else(|| DeviceError::new(
+            DeviceErrorCode::NotAvailable, "device.battery", "read",
+            "no battery device is exposed by the host", false
+        ))?;
+        let present = Self::read_optional_text(&path, "present")
+            .map(|value| value == "1").unwrap_or(true);
+        if !present {
+            return Err(DeviceError::new(DeviceErrorCode::NotAvailable, "device.battery", "read", "battery is reported as absent", false));
+        }
+        let capacity = Self::read_optional_number(&path, "capacity");
+        let voltage = Self::read_optional_number(&path, "voltage_now").map(|value| value / 1000.0);
+        let current = Self::read_optional_number(&path, "current_now").map(|value| value / 1000.0);
+        let temperature = Self::read_optional_number(&path, "temp").map(|value| value / 10.0);
+        let state = Self::read_optional_text(&path, "status");
+        let technology = Self::read_optional_text(&path, "technology");
+        if capacity.is_none() && state.is_none() && voltage.is_none() && current.is_none() && temperature.is_none() {
+            return Err(DeviceError::new(DeviceErrorCode::NotAvailable, "device.battery", "read", "battery telemetry attributes are not readable", true));
+        }
+        Ok(BatteryReading {
+            present,
+            capacity_percent: capacity,
+            state,
+            voltage_mv: voltage,
+            current_ma: current,
+            temperature_c: temperature,
+            technology,
+        })
+    }
 }
 
 /// Safe default for CLI/REPL and hosts that have not installed a native bridge.
@@ -192,6 +333,30 @@ impl DeviceRegistry {
 
     pub fn unsupported() -> Self {
         Self::new(Arc::new(UnsupportedBackend))
+    }
+
+    pub fn system_default() -> Self {
+        match Platform::current() {
+            Platform::Android | Platform::Linux => Self::new(Arc::new(SysfsBackend::system())),
+            _ => Self::unsupported(),
+        }
+    }
+
+    pub fn read_battery(&self) -> Result<BatteryReading, DeviceError> {
+        let capability = self.backend.capability("device.battery");
+        if !capability.supported {
+            return Err(DeviceError::unsupported("device.battery", "read"));
+        }
+        if !capability.available {
+            return Err(DeviceError::new(
+                DeviceErrorCode::NotAvailable,
+                "device.battery",
+                "read",
+                "battery telemetry is currently unavailable",
+                true,
+            ));
+        }
+        self.backend.read_battery()
     }
 
     pub fn platform(&self) -> Platform {
