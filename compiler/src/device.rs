@@ -150,6 +150,31 @@ pub trait DeviceBackend: Send + Sync {
     fn read_battery(&self) -> Result<BatteryReading, DeviceError> {
         Err(DeviceError::unsupported("device.battery", "read"))
     }
+
+    fn read_memory(&self) -> Result<MemoryReading, DeviceError> {
+        Err(DeviceError::unsupported("device.memory", "read"))
+    }
+
+    fn read_cpu(&self) -> Result<CpuReading, DeviceError> {
+        Err(DeviceError::unsupported("device.cpu", "read"))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryReading {
+    pub total_bytes: u64,
+    pub available_bytes: u64,
+    pub free_bytes: u64,
+    pub swap_total_bytes: u64,
+    pub swap_free_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CpuReading {
+    pub model: String,
+    pub architecture: String,
+    pub logical_cores: usize,
+    pub frequency_mhz: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -168,6 +193,7 @@ pub struct BatteryReading {
 #[derive(Debug, Clone)]
 pub struct SysfsBackend {
     root: PathBuf,
+    proc_root: PathBuf,
     platform: Platform,
 }
 
@@ -177,7 +203,11 @@ impl SysfsBackend {
     }
 
     pub fn with_root(root: impl Into<PathBuf>, platform: Platform) -> Self {
-        Self { root: root.into(), platform }
+        Self::with_paths(root, "/proc", platform)
+    }
+
+    pub fn with_paths(root: impl Into<PathBuf>, proc_root: impl Into<PathBuf>, platform: Platform) -> Self {
+        Self { root: root.into(), proc_root: proc_root.into(), platform }
     }
 
     fn battery_path(&self) -> Option<PathBuf> {
@@ -197,6 +227,64 @@ impl SysfsBackend {
         None
     }
 
+    fn read_memory_from_proc(&self) -> Result<MemoryReading, DeviceError> {
+        let contents = fs::read_to_string(self.proc_root.join("meminfo")).map_err(|error| {
+            DeviceError::new(DeviceErrorCode::NotAvailable, "device.memory", "read", format!("cannot read /proc/meminfo: {error}"), true)
+        })?;
+        let mut fields = std::collections::HashMap::new();
+        for line in contents.lines() {
+            if let Some((key, value)) = line.split_once(':') {
+                if let Some(number) = value.split_whitespace().next().and_then(|v| v.parse::<u64>().ok()) {
+                    fields.insert(key.trim(), number.saturating_mul(1024));
+                }
+            }
+        }
+        let get = |key: &str| fields.get(key).copied();
+        let total_bytes = get("MemTotal").ok_or_else(|| DeviceError::new(DeviceErrorCode::NotAvailable, "device.memory", "read", "MemTotal is missing from /proc/meminfo", true))?;
+        let free_bytes = get("MemFree").ok_or_else(|| DeviceError::new(DeviceErrorCode::NotAvailable, "device.memory", "read", "MemFree is missing from /proc/meminfo", true))?;
+        let available_bytes = get("MemAvailable").unwrap_or(free_bytes);
+        Ok(MemoryReading {
+            total_bytes,
+            available_bytes,
+            free_bytes,
+            swap_total_bytes: get("SwapTotal").unwrap_or(0),
+            swap_free_bytes: get("SwapFree").unwrap_or(0),
+        })
+    }
+
+    fn read_cpu_from_proc(&self) -> Result<CpuReading, DeviceError> {
+        let contents = fs::read_to_string(self.proc_root.join("cpuinfo")).map_err(|error| {
+            DeviceError::new(DeviceErrorCode::NotAvailable, "device.cpu", "read", format!("cannot read /proc/cpuinfo: {error}"), true)
+        })?;
+        let mut model = None;
+        let mut frequency_mhz = None;
+        let mut logical_cores = 0usize;
+        for line in contents.lines() {
+            let Some((key, value)) = line.split_once(':') else { continue; };
+            let key = key.trim();
+            let value = value.trim();
+            if matches!(key, "model name" | "Hardware" | "Processor" | "cpu model") && model.is_none() {
+                model = Some(value.to_owned());
+            }
+            if key == "processor" {
+                logical_cores += 1;
+            }
+            if key == "cpu MHz" && frequency_mhz.is_none() {
+                frequency_mhz = value.parse::<f64>().ok();
+            }
+        }
+        let model = model.unwrap_or_else(|| format!("{} processor", std::env::consts::ARCH));
+        if logical_cores == 0 {
+            logical_cores = std::thread::available_parallelism().map(usize::from).unwrap_or(1);
+        }
+        Ok(CpuReading {
+            model,
+            architecture: std::env::consts::ARCH.to_owned(),
+            logical_cores,
+            frequency_mhz,
+        })
+    }
+
     fn read_optional_number(path: &Path, name: &str) -> Option<f64> {
         fs::read_to_string(path.join(name)).ok()?.trim().parse::<f64>().ok()
     }
@@ -214,8 +302,33 @@ impl DeviceBackend for SysfsBackend {
     }
 
     fn capability(&self, module: &str) -> Capability {
+        if !matches!(self.platform, Platform::Android | Platform::Linux) {
+            return Capability::unsupported(module, self.platform, "this procfs/sysfs adapter is available only on Linux and Android");
+        }
+        if module == "device.memory" || module == "device.ram" {
+            return match self.read_memory_from_proc() {
+                Ok(_) => Capability {
+                    module: module.into(), platform: self.platform, supported: true, available: true,
+                    permission: PermissionState::NotRequired,
+                    features: vec!["total_bytes".into(), "available_bytes".into(), "free_bytes".into(), "swap_total_bytes".into(), "swap_free_bytes".into()],
+                    limitations: Vec::new(),
+                },
+                Err(error) => Capability::unsupported(module, self.platform, error.message),
+            };
+        }
+        if module == "device.cpu" {
+            return match self.read_cpu_from_proc() {
+                Ok(reading) => Capability {
+                    module: module.into(), platform: self.platform, supported: true, available: reading.logical_cores > 0,
+                    permission: PermissionState::NotRequired,
+                    features: vec!["model".into(), "architecture".into(), "logical_cores".into(), "frequency_mhz".into()],
+                    limitations: Vec::new(),
+                },
+                Err(error) => Capability::unsupported(module, self.platform, error.message),
+            };
+        }
         if module != "device.battery" {
-            return Capability::unsupported(module, self.platform, "this sysfs adapter implements battery telemetry only");
+            return Capability::unsupported(module, self.platform, "this sysfs/procfs adapter implements battery, memory, and CPU telemetry only");
         }
         let Some(path) = self.battery_path() else {
             return Capability::unsupported(module, self.platform, "no readable battery device was detected through power_supply sysfs");
@@ -256,6 +369,20 @@ impl DeviceBackend for SysfsBackend {
             return Err(DeviceError::unsupported(module, "request_permission"));
         }
         Ok(PermissionState::NotRequired)
+    }
+
+    fn read_memory(&self) -> Result<MemoryReading, DeviceError> {
+        if !matches!(self.platform, Platform::Android | Platform::Linux) {
+            return Err(DeviceError::unsupported("device.memory", "read"));
+        }
+        self.read_memory_from_proc()
+    }
+
+    fn read_cpu(&self) -> Result<CpuReading, DeviceError> {
+        if !matches!(self.platform, Platform::Android | Platform::Linux) {
+            return Err(DeviceError::unsupported("device.cpu", "read"));
+        }
+        self.read_cpu_from_proc()
     }
 
     fn read_battery(&self) -> Result<BatteryReading, DeviceError> {
@@ -342,6 +469,22 @@ impl DeviceRegistry {
             Platform::Android | Platform::Linux => Self::new(Arc::new(SysfsBackend::system())),
             _ => Self::unsupported(),
         }
+    }
+
+    pub fn read_memory(&self) -> Result<MemoryReading, DeviceError> {
+        let capability = self.backend.capability("device.memory");
+        if !capability.supported || !capability.available {
+            return Err(DeviceError::new(DeviceErrorCode::NotAvailable, "device.memory", "read", "memory telemetry is unavailable on this host", false));
+        }
+        self.backend.read_memory()
+    }
+
+    pub fn read_cpu(&self) -> Result<CpuReading, DeviceError> {
+        let capability = self.backend.capability("device.cpu");
+        if !capability.supported || !capability.available {
+            return Err(DeviceError::new(DeviceErrorCode::NotAvailable, "device.cpu", "read", "CPU telemetry is unavailable on this host", false));
+        }
+        self.backend.read_cpu()
     }
 
     pub fn read_battery(&self) -> Result<BatteryReading, DeviceError> {
@@ -587,6 +730,33 @@ mod tests {
             registry.request_permission("device.camera").unwrap_err().code,
             DeviceErrorCode::Unsupported
         );
+    }
+
+    #[test]
+    fn procfs_backend_reads_memory_and_cpu_telemetry() {
+        let root = std::env::temp_dir().join(format!("mosh-proc-fixture-{}", std::process::id()));
+        let power = root.join("power");
+        let proc = root.join("proc");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&power).unwrap();
+        fs::create_dir_all(&proc).unwrap();
+        fs::write(proc.join("meminfo"), "MemTotal:       8192000 kB\nMemFree:        1024000 kB\nMemAvailable:   2048000 kB\nSwapTotal:       512000 kB\nSwapFree:        256000 kB\n").unwrap();
+        fs::write(proc.join("cpuinfo"), "processor : 0\nmodel name : Test ARM CPU\ncpu MHz : 2400.000\n\nprocessor : 1\nmodel name : Test ARM CPU\ncpu MHz : 2400.000\n").unwrap();
+        let backend = SysfsBackend::with_paths(&power, &proc, Platform::Linux);
+        let memory = backend.read_memory().unwrap();
+        assert_eq!(memory.total_bytes, 8_388_608_000);
+        assert_eq!(memory.available_bytes, 2_097_152_000);
+        assert_eq!(memory.free_bytes, 1_048_576_000);
+        assert_eq!(memory.swap_total_bytes, 524_288_000);
+        assert_eq!(memory.swap_free_bytes, 262_144_000);
+        let cpu = backend.read_cpu().unwrap();
+        assert_eq!(cpu.model, "Test ARM CPU");
+        assert_eq!(cpu.logical_cores, 2);
+        assert_eq!(cpu.frequency_mhz, Some(2400.0));
+        assert!(backend.capability("device.memory").supported);
+        assert!(backend.capability("device.cpu").supported);
+        assert!(backend.capability("device.ram").supported);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

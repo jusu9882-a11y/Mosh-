@@ -21,7 +21,7 @@ The runtime contract includes:
 
 ## Important behavior
 
-The CLI and REPL install a real Linux/Android sysfs battery adapter when running on those operating systems; it discovers `/sys/class/power_supply` and reads kernel battery attributes. Other device modules remain unsupported. On iOS and Windows, the default remains `UnsupportedBackend` until native adapters are added. If sysfs battery discovery fails, battery support is reported as unavailable rather than returning fabricated data.
+The CLI and REPL install a Linux/Android procfs/sysfs adapter when running on those operating systems. It discovers batteries through `/sys/class/power_supply`, reads memory information from `/proc/meminfo`, and reads CPU model/core/frequency information from `/proc/cpuinfo`. Other device modules remain unsupported. On iOS and Windows, the default remains `UnsupportedBackend` until native adapters are added. If sysfs battery discovery fails, battery support is reported as unavailable rather than returning fabricated data.
 
 A native adapter must query the actual OS and device. It must distinguish hardware absence from permission denial and temporary unavailability. Permission prompts must be initiated only by an explicit program/user action and must respect app lifecycle interruption and revocation.
 
