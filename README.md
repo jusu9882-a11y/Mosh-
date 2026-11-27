@@ -92,7 +92,7 @@ use moshc::{lexer, parser};
 
 let backend = Arc::new(SysfsBackend::system());
 let mut interpreter = Interpreter::with_device_backend(backend);
-let tokens = lexer::tokenize("device.battery.is_supported()\\n")?;
+let tokens = lexer::tokenize("device.battery.is_supported()\n")?;
 let program = parser::parse(&tokens)?;
 let result = interpreter.execute(&program)?;
 # Ok::<(), Box<dyn std::error::Error>>(())
