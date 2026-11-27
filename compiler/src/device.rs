@@ -158,6 +158,19 @@ pub trait DeviceBackend: Send + Sync {
     fn read_cpu(&self) -> Result<CpuReading, DeviceError> {
         Err(DeviceError::unsupported("device.cpu", "read"))
     }
+
+    fn read_storage_volumes(&self) -> Result<Vec<StorageVolume>, DeviceError> {
+        Err(DeviceError::unsupported("device.storage", "volumes"))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageVolume {
+    pub source: String,
+    pub mount_point: String,
+    pub filesystem: String,
+    pub options: String,
+    pub read_only: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -225,6 +238,28 @@ impl SysfsBackend {
             }
         }
         None
+    }
+
+    fn read_storage_from_proc(&self) -> Result<Vec<StorageVolume>, DeviceError> {
+        let contents = fs::read_to_string(self.proc_root.join("mounts")).map_err(|error| {
+            DeviceError::new(DeviceErrorCode::NotAvailable, "device.storage", "volumes", format!("cannot read /proc/mounts: {error}"), true)
+        })?;
+        let mut volumes = Vec::new();
+        for line in contents.lines() {
+            let fields = line.split_whitespace().collect::<Vec<_>>();
+            if fields.len() < 4 {
+                continue;
+            }
+            let options = fields[3].to_owned();
+            volumes.push(StorageVolume {
+                source: decode_mount_field(fields[0]),
+                mount_point: decode_mount_field(fields[1]),
+                filesystem: fields[2].to_owned(),
+                read_only: options.split(',').any(|option| option == "ro"),
+                options,
+            });
+        }
+        Ok(volumes)
     }
 
     fn read_memory_from_proc(&self) -> Result<MemoryReading, DeviceError> {
@@ -305,6 +340,17 @@ impl DeviceBackend for SysfsBackend {
         if !matches!(self.platform, Platform::Android | Platform::Linux) {
             return Capability::unsupported(module, self.platform, "this procfs/sysfs adapter is available only on Linux and Android");
         }
+        if module == "device.storage" || module == "device.fs" {
+            return match self.read_storage_from_proc() {
+                Ok(volumes) => Capability {
+                    module: module.into(), platform: self.platform, supported: true, available: !volumes.is_empty(),
+                    permission: PermissionState::NotRequired,
+                    features: vec!["volumes".into(), "mount_points".into(), "filesystem_types".into(), "read_only_flags".into()],
+                    limitations: Vec::new(),
+                },
+                Err(error) => Capability::unsupported(module, self.platform, error.message),
+            };
+        }
         if module == "device.memory" || module == "device.ram" {
             return match self.read_memory_from_proc() {
                 Ok(_) => Capability {
@@ -328,7 +374,7 @@ impl DeviceBackend for SysfsBackend {
             };
         }
         if module != "device.battery" {
-            return Capability::unsupported(module, self.platform, "this sysfs/procfs adapter implements battery, memory, and CPU telemetry only");
+            return Capability::unsupported(module, self.platform, "this sysfs/procfs adapter implements battery, memory, CPU, and storage telemetry only");
         }
         let Some(path) = self.battery_path() else {
             return Capability::unsupported(module, self.platform, "no readable battery device was detected through power_supply sysfs");
@@ -369,6 +415,13 @@ impl DeviceBackend for SysfsBackend {
             return Err(DeviceError::unsupported(module, "request_permission"));
         }
         Ok(PermissionState::NotRequired)
+    }
+
+    fn read_storage_volumes(&self) -> Result<Vec<StorageVolume>, DeviceError> {
+        if !matches!(self.platform, Platform::Android | Platform::Linux) {
+            return Err(DeviceError::unsupported("device.storage", "volumes"));
+        }
+        self.read_storage_from_proc()
     }
 
     fn read_memory(&self) -> Result<MemoryReading, DeviceError> {
@@ -414,6 +467,13 @@ impl DeviceBackend for SysfsBackend {
             technology,
         })
     }
+}
+
+fn decode_mount_field(value: &str) -> String {
+    value.replace("\\040", " ")
+        .replace("\\011", "\t")
+        .replace("\\012", "\n")
+        .replace("\\134", "\\")
 }
 
 /// Safe default for CLI/REPL and hosts that have not installed a native bridge.
@@ -469,6 +529,17 @@ impl DeviceRegistry {
             Platform::Android | Platform::Linux => Self::new(Arc::new(SysfsBackend::system())),
             _ => Self::unsupported(),
         }
+    }
+
+    pub fn read_storage_volumes(&self) -> Result<Vec<StorageVolume>, DeviceError> {
+        let capability = self.backend.capability("device.storage");
+        if !capability.supported {
+            return Err(DeviceError::unsupported("device.storage", "volumes"));
+        }
+        if !capability.available {
+            return Err(DeviceError::new(DeviceErrorCode::NotAvailable, "device.storage", "volumes", "no mounted storage volumes were reported", true));
+        }
+        self.backend.read_storage_volumes()
     }
 
     pub fn read_memory(&self) -> Result<MemoryReading, DeviceError> {
@@ -730,6 +801,28 @@ mod tests {
             registry.request_permission("device.camera").unwrap_err().code,
             DeviceErrorCode::Unsupported
         );
+    }
+
+    #[test]
+    fn procfs_backend_lists_storage_mounts_and_decodes_escaped_paths() {
+        let root = std::env::temp_dir().join(format!("mosh-mounts-fixture-{}", std::process::id()));
+        let power = root.join("power");
+        let proc = root.join("proc");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&power).unwrap();
+        fs::create_dir_all(&proc).unwrap();
+        fs::write(proc.join("mounts"), "/dev/root / ext4 rw,relatime 0 0\n/dev/sda1 /mnt/My\\040Drive ext4 ro,nosuid 0 0\n").unwrap();
+        let backend = SysfsBackend::with_paths(&power, &proc, Platform::Linux);
+        let volumes = backend.read_storage_volumes().unwrap();
+        assert_eq!(volumes.len(), 2);
+        assert_eq!(volumes[0].mount_point, "/");
+        assert!(!volumes[0].read_only);
+        assert_eq!(volumes[1].mount_point, "/mnt/My Drive");
+        assert_eq!(volumes[1].filesystem, "ext4");
+        assert!(volumes[1].read_only);
+        assert!(backend.capability("device.storage").supported);
+        assert!(backend.capability("device.fs").supported);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
