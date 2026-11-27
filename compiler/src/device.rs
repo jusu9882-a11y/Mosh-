@@ -302,6 +302,9 @@ impl DeviceBackend for SysfsBackend {
     }
 
     fn capability(&self, module: &str) -> Capability {
+        if !matches!(self.platform, Platform::Android | Platform::Linux) {
+            return Capability::unsupported(module, self.platform, "this procfs/sysfs adapter is available only on Linux and Android");
+        }
         if module == "device.memory" || module == "device.ram" {
             return match self.read_memory_from_proc() {
                 Ok(_) => Capability {
@@ -727,6 +730,33 @@ mod tests {
             registry.request_permission("device.camera").unwrap_err().code,
             DeviceErrorCode::Unsupported
         );
+    }
+
+    #[test]
+    fn procfs_backend_reads_memory_and_cpu_telemetry() {
+        let root = std::env::temp_dir().join(format!("mosh-proc-fixture-{}", std::process::id()));
+        let power = root.join("power");
+        let proc = root.join("proc");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&power).unwrap();
+        fs::create_dir_all(&proc).unwrap();
+        fs::write(proc.join("meminfo"), "MemTotal:       8192000 kB\nMemFree:        1024000 kB\nMemAvailable:   2048000 kB\nSwapTotal:       512000 kB\nSwapFree:        256000 kB\n").unwrap();
+        fs::write(proc.join("cpuinfo"), "processor : 0\nmodel name : Test ARM CPU\ncpu MHz : 2400.000\n\nprocessor : 1\nmodel name : Test ARM CPU\ncpu MHz : 2400.000\n").unwrap();
+        let backend = SysfsBackend::with_paths(&power, &proc, Platform::Linux);
+        let memory = backend.read_memory().unwrap();
+        assert_eq!(memory.total_bytes, 8_388_608_000);
+        assert_eq!(memory.available_bytes, 2_097_152_000);
+        assert_eq!(memory.free_bytes, 1_048_576_000);
+        assert_eq!(memory.swap_total_bytes, 524_288_000);
+        assert_eq!(memory.swap_free_bytes, 262_144_000);
+        let cpu = backend.read_cpu().unwrap();
+        assert_eq!(cpu.model, "Test ARM CPU");
+        assert_eq!(cpu.logical_cores, 2);
+        assert_eq!(cpu.frequency_mhz, Some(2400.0));
+        assert!(backend.capability("device.memory").supported);
+        assert!(backend.capability("device.cpu").supported);
+        assert!(backend.capability("device.ram").supported);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
