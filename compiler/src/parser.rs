@@ -38,6 +38,8 @@ pub enum Stmt {
         value: Option<Expr>,
         span: Span,
     },
+    Raise { value: Expr, span: Span },
+    Try { body: Vec<Stmt>, catch_name: String, catch_body: Vec<Stmt>, span: Span },
     If {
         condition: Expr,
         then_body: Vec<Stmt>,
