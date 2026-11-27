@@ -425,6 +425,118 @@ impl Interpreter {
 
     fn call(&mut self, name: &str, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
         match name {
+            "type" => {
+                if args.len() != 1 { return Err(self.error("type() expects exactly one argument", span)); }
+                let kind = match &args[0] {
+                    Value::Integer(_) => "int", Value::Float(_) => "float",
+                    Value::String(_) => "string", Value::Boolean(_) => "bool",
+                    Value::List(_) => "list", Value::Dict(_) => "dict",
+                    Value::Tuple(_) => "tuple", Value::Module(_) => "module",
+                    Value::FunctionRef(_, _) => "function", Value::Nil => "nil",
+                };
+                Ok(Value::String(kind.to_owned()))
+            }
+            "str" => {
+                if args.len() != 1 { return Err(self.error("str() expects exactly one argument", span)); }
+                Ok(Value::String(args[0].to_string()))
+            }
+            "int" => {
+                if args.len() != 1 { return Err(self.error("int() expects exactly one argument", span)); }
+                match &args[0] {
+                    Value::Integer(value) => Ok(Value::Integer(*value)),
+                    Value::Float(value) if value.is_finite() && *value >= i64::MIN as f64 && *value < 9_223_372_036_854_775_808.0 => Ok(Value::Integer(value.trunc() as i64)),
+                    Value::String(value) => value.parse::<i64>().map(Value::Integer).map_err(|_| self.error("int() cannot convert this string to an integer", span)),
+                    _ => Err(self.error("int() expects an integer, finite float, or integer string", span)),
+                }
+            }
+            "float" => {
+                if args.len() != 1 { return Err(self.error("float() expects exactly one argument", span)); }
+                match &args[0] {
+                    Value::Integer(value) => Ok(Value::Float(*value as f64)),
+                    Value::Float(value) => Ok(Value::Float(*value)),
+                    Value::String(value) => value.parse::<f64>().filter(|v| v.is_finite()).map(Value::Float).map_err(|_| self.error("float() cannot convert this string to a finite number", span)),
+                    _ => Err(self.error("float() expects an integer, float, or numeric string", span)),
+                }
+            }
+            "abs" => {
+                if args.len() != 1 { return Err(self.error("abs() expects exactly one number", span)); }
+                match args[0] {
+                    Value::Integer(value) => value.checked_abs().map(Value::Integer).ok_or_else(|| self.error("abs() integer overflow", span)),
+                    Value::Float(value) => Ok(Value::Float(value.abs())),
+                    _ => Err(self.error("abs() argument must be a number", span)),
+                }
+            }
+            "sqrt" | "floor" | "ceil" | "round" => {
+                if args.len() != 1 { return Err(self.error(&format!("{name}() expects exactly one number"), span)); }
+                let value = match args[0] { Value::Integer(v) => v as f64, Value::Float(v) => v, _ => return Err(self.error(&format!("{name}() argument must be a number"), span)) };
+                if name == "sqrt" && value < 0.0 { return Err(self.error("sqrt() cannot accept a negative number", span)); }
+                let result = match name { "sqrt" => value.sqrt(), "floor" => value.floor(), "ceil" => value.ceil(), _ => value.round() };
+                if !result.is_finite() { return Err(self.error(&format!("{name}() result is not finite"), span)); }
+                Ok(Value::Float(result))
+            }
+            "pow" => {
+                if args.len() != 2 { return Err(self.error("pow() expects two numbers", span)); }
+                match (&args[0], &args[1]) {
+                    (Value::Integer(base), Value::Integer(exponent)) if *exponent >= 0 && *exponent <= u32::MAX as i64 => base.checked_pow(*exponent as u32).map(Value::Integer).ok_or_else(|| self.error("pow() integer overflow", span)),
+                    (Value::Integer(_), Value::Integer(exponent)) if *exponent < 0 => {
+                        let base = match args[0] { Value::Integer(v) => v as f64, _ => unreachable!() };
+                        if base == 0.0 { return Err(self.error("pow() division by zero", span)); }
+                        Ok(Value::Float(base.powf(*exponent as f64)))
+                    }
+                    (Value::Integer(a), Value::Float(b)) => Ok(Value::Float((*a as f64).powf(*b))),
+                    (Value::Float(a), Value::Integer(b)) => Ok(Value::Float(a.powf(*b as f64))),
+                    (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a.powf(*b))),
+                    _ => Err(self.error("pow() arguments must be numbers", span)),
+                }
+            }
+            "min" | "max" => {
+                if args.is_empty() { return Err(self.error(&format!("{name}() expects at least one number"), span)); }
+                let mut numbers = Vec::with_capacity(args.len());
+                let mut has_float = false;
+                for value in &args {
+                    match value {
+                        Value::Integer(v) => numbers.push(*v as f64),
+                        Value::Float(v) => { numbers.push(*v); has_float = true; }
+                        _ => return Err(self.error(&format!("{name}() arguments must all be numbers"), span)),
+                    }
+                }
+                let selected = if name == "min" { numbers.into_iter().fold(f64::INFINITY, f64::min) } else { numbers.into_iter().fold(f64::NEG_INFINITY, f64::max) };
+                if has_float { Ok(Value::Float(selected)) } else { Ok(Value::Integer(selected as i64)) }
+            }
+            "sum" => {
+                if args.len() != 1 { return Err(self.error("sum() expects exactly one list or tuple", span)); }
+                let values = match &args[0] { Value::List(v) => v.borrow().clone(), Value::Tuple(v) => v.clone(), _ => return Err(self.error("sum() expects a list or tuple", span)) };
+                let mut integer_total = 0i64;
+                let mut float_total = 0.0f64;
+                let mut has_float = false;
+                for value in values {
+                    match value {
+                        Value::Integer(v) if !has_float => integer_total = integer_total.checked_add(v).ok_or_else(|| self.error("sum() integer overflow", span))?,
+                        Value::Integer(v) => float_total += v as f64,
+                        Value::Float(v) => { if !has_float { float_total = integer_total as f64; has_float = true; } float_total += v; }
+                        _ => return Err(self.error("sum() values must all be numbers", span)),
+                    }
+                }
+                if has_float { Ok(Value::Float(float_total)) } else { Ok(Value::Integer(integer_total)) }
+            }
+            "range" => {
+                if !(1..=3).contains(&args.len()) { return Err(self.error("range() expects one, two, or three integer arguments", span)); }
+                let mut numbers = Vec::with_capacity(args.len());
+                for value in &args {
+                    let Value::Integer(number) = value else { return Err(self.error("range() arguments must be integers", span)); };
+                    numbers.push(*number);
+                }
+                let (start, stop, step) = match numbers.as_slice() { [stop] => (0, *stop, 1), [start, stop] => (*start, *stop, 1), [start, stop, step] => (*start, *stop, *step), _ => unreachable!() };
+                if step == 0 { return Err(self.error("range() step cannot be zero", span)); }
+                let mut values = Vec::new();
+                let mut current = start;
+                while if step > 0 { current < stop } else { current > stop } {
+                    if values.len() >= 1_000_000 { return Err(self.error("range() exceeds the 1,000,000 item safety limit", span)); }
+                    values.push(Value::Integer(current));
+                    current = current.checked_add(step).ok_or_else(|| self.error("range() integer overflow", span))?;
+                }
+                Ok(Value::List(Rc::new(RefCell::new(values))))
+            }
             "len" => {
                 if args.len() != 1 { return Err(self.error("len() expects exactly one argument", span)); }
                 let length = match &args[0] {
@@ -727,6 +839,41 @@ mod tests {
         assert!(error.message.contains("circular import detected"));
         assert!(error.message.contains("a.mosh") && error.message.contains("b.mosh"));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn supports_numeric_math_and_conversions() {
+        assert_eq!(run("abs(-9)\n").unwrap(), Value::Integer(9));
+        assert_eq!(run("sqrt(81)\n").unwrap(), Value::Float(9.0));
+        assert_eq!(run("floor(4.8)\n").unwrap(), Value::Float(4.0));
+        assert_eq!(run("ceil(4.2)\n").unwrap(), Value::Float(5.0));
+        assert_eq!(run("round(4.6)\n").unwrap(), Value::Float(5.0));
+        assert_eq!(run("pow(2, 10)\n").unwrap(), Value::Integer(1024));
+        assert_eq!(run("pow(2, -2)\n").unwrap(), Value::Float(0.25));
+        assert_eq!(run("int(\"42\")\n").unwrap(), Value::Integer(42));
+        assert_eq!(run("float(\"2.5\")\n").unwrap(), Value::Float(2.5));
+        assert_eq!(run("str(42)\n").unwrap(), Value::String("42".into()));
+        assert_eq!(run("type([1])\n").unwrap(), Value::String("list".into()));
+    }
+
+    #[test]
+    fn supports_min_max_sum_and_range() {
+        assert_eq!(run("min(8, 2, 5)\n").unwrap(), Value::Integer(2));
+        assert_eq!(run("max(8, 2, 5.5)\n").unwrap(), Value::Float(8.0));
+        assert_eq!(run("sum([1, 2, 3, 4])\n").unwrap(), Value::Integer(10));
+        assert_eq!(run("sum((1, 2.5, 3))\n").unwrap(), Value::Float(6.5));
+        assert_eq!(run("mut total = 0\nfor n in range(1, 6):\n    total = total + n\ntotal\n").unwrap(), Value::Integer(15));
+        assert_eq!(run("range(5, 0, -2)[2]\n").unwrap(), Value::Integer(1));
+    }
+
+    #[test]
+    fn numeric_builtins_reject_invalid_inputs_and_overflow() {
+        assert!(run("sqrt(-1)\n").unwrap_err().message.contains("negative"));
+        assert!(run("abs(-9223372036854775807 - 1)\n").unwrap_err().message.contains("overflow"));
+        assert!(run("pow(2, 100)\n").unwrap_err().message.contains("overflow"));
+        assert!(run("int(\"hello\")\n").unwrap_err().message.contains("cannot convert"));
+        assert!(run("range(1, 5, 0)\n").unwrap_err().message.contains("cannot be zero"));
+        assert!(run("sum([1, \"bad\"])\n").unwrap_err().message.contains("must all be numbers"));
     }
 
     #[test]
