@@ -73,13 +73,14 @@ impl Interpreter {
     pub fn execute(&mut self, program: &Program) -> Result<Value, RuntimeError> {
         let mut last = Value::Nil;
         for statement in &program.statements {
-            match self.execute_stmt(statement)? {
-                Flow::Continue => {}
-                Flow::Return(_) => return Err(self.error("return used outside a function", stmt_span(statement))),
-            }
             if let Stmt::Expression { expression, .. } = statement {
                 last = self.eval(expression)?;
                 if self.output { println!("{last}"); }
+                continue;
+            }
+            match self.execute_stmt(statement)? {
+                Flow::Continue => {}
+                Flow::Return(_) => return Err(self.error("return used outside a function", stmt_span(statement))),
             }
         }
         Ok(last)
@@ -116,7 +117,7 @@ impl Interpreter {
                 };
                 let scope = self.scopes.last_mut().expect("interpreter always has a scope");
                 if scope.contains_key(name) {
-                    return Err(self.error(&format!("'{name}' is already declared in this scope"), *span));
+                    return Err(RuntimeError { message: format!("'{name}' is already declared in this scope"), span: *span });
                 }
                 scope.insert(name.clone(), Binding { value, mutable: *mutable });
                 Ok(Flow::Continue)
@@ -142,7 +143,8 @@ impl Interpreter {
                 Ok(Flow::Continue)
             }
             Stmt::If { condition, then_body, else_body, span } => {
-                if self.truthy(&self.eval(condition)?) {
+                let condition_value = self.eval(condition)?;
+                if self.truthy(&condition_value) {
                     self.execute_block(then_body, true)
                 } else if let Some(body) = else_body {
                     self.execute_block(body, true)
@@ -153,7 +155,9 @@ impl Interpreter {
             }
             Stmt::While { condition, body, span } => {
                 let mut iterations = 0usize;
-                while self.truthy(&self.eval(condition)?) {
+                loop {
+                    let condition_value = self.eval(condition)?;
+                    if !self.truthy(&condition_value) { break; }
                     iterations += 1;
                     if iterations > 1_000_000 {
                         return Err(self.error("loop iteration safety limit exceeded (1,000,000)", *span));
