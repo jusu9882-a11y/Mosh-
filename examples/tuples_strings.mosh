@@ -1,0 +1,18 @@
+@ Tuples are immutable ordered values.
+let user = ("Francis", "Mosh", 1)
+print(user[0])
+print(user[-1])
+
+@ String utilities compose with lists and tuples.
+let title = trim("  mosh language  ")
+print(upper(title))
+print(replace(title, "language", "interpreter"))
+
+let words = split("safe,fast,clear", ",")
+print(join(words, " | "))
+print(contains(title, "mosh"))
+
+mut total = 0
+for value in (2, 3, 5):
+    total = total + value
+print(total)
