@@ -1,0 +1,17 @@
+@ Mosh list and loop example
+
+mut fruits = ["Mango", "Apple", "Orange"]
+
+print(fruits[0])
+print(len(fruits))
+
+push(fruits, "Banana")
+
+for fruit in fruits:
+    print(fruit)
+
+mut total = 0
+for number in [1, 2, 3, 4]:
+    total = total + number
+
+print(total)
