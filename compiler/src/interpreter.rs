@@ -428,7 +428,7 @@ impl Interpreter {
                 match self.eval(object)? {
                     Value::DeviceRoot => Ok(Value::DeviceModule(name.clone())),
                     Value::DeviceModule(module) => {
-                        const METHODS: &[&str] = &["is_supported", "is_available", "capabilities", "status", "permission", "request_permission", "read"];
+                        const METHODS: &[&str] = &["is_supported", "is_available", "capabilities", "status", "permission", "request_permission", "read", "volumes"];
                         if METHODS.contains(&name.as_str()) {
                             Ok(Value::DeviceFunction(module.clone(), name.clone()))
                         } else {
@@ -458,6 +458,7 @@ impl Interpreter {
         let canonical_module = match module {
             "ram" => "memory",
             "power" => "battery",
+            "fs" => "storage",
             _ => module,
         };
         let name = format!("device.{canonical_module}");
@@ -522,6 +523,21 @@ impl Interpreter {
                 values.insert("frequency_mhz".into(), reading.frequency_mhz.map(Value::Float).unwrap_or(Value::Nil));
                 Ok(Value::Dict(Rc::new(RefCell::new(values))))
             }
+            "volumes" if canonical_module == "storage" => {
+                let volumes = self.device_registry.read_storage_volumes()
+                    .map_err(|error| self.error(&error.to_string(), span))?;
+                let values = volumes.into_iter().map(|volume| {
+                    let mut fields = HashMap::new();
+                    fields.insert("source".into(), Value::String(volume.source));
+                    fields.insert("mount_point".into(), Value::String(volume.mount_point));
+                    fields.insert("filesystem".into(), Value::String(volume.filesystem));
+                    fields.insert("options".into(), Value::String(volume.options));
+                    fields.insert("read_only".into(), Value::Boolean(volume.read_only));
+                    Value::Dict(Rc::new(RefCell::new(fields)))
+                }).collect();
+                Ok(Value::List(Rc::new(RefCell::new(values))))
+            }
+            "volumes" => Err(self.error(&format!("device.{module}.volumes() is not implemented by the active backend"), span)),
             "read" => Err(self.error(&format!("device.{module}.read() is not implemented by the active backend"), span)),
             "request_permission" => {
                 let state = self.device_registry.request_permission(&name)
@@ -1373,6 +1389,28 @@ memory["total_bytes"] + ram["available_bytes"] + cpu["logical_cores"]
 "#;
         let program = parse(&tokenize(source).unwrap()).unwrap();
         assert_eq!(interpreter.execute(&program).unwrap(), Value::Integer(10_485_760_002));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn storage_and_fs_alias_list_real_mount_inventory_from_backend() {
+        let root = std::env::temp_dir().join(format!("mosh-interpreter-mounts-{}", std::process::id()));
+        let power = root.join("power");
+        let proc = root.join("proc");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&power).unwrap();
+        fs::create_dir_all(&proc).unwrap();
+        fs::write(proc.join("mounts"), "/dev/root / ext4 rw,relatime 0 0\n/dev/sda1 /mnt/data ext4 ro,nosuid 0 0\n").unwrap();
+        let backend = std::sync::Arc::new(crate::device::SysfsBackend::with_paths(
+            &power, &proc, crate::device::Platform::Linux
+        ));
+        let mut interpreter = Interpreter::with_device_backend(backend);
+        let source = r#"let mounts = device.storage.volumes()
+let alias_mounts = device.fs.volumes()
+len(mounts) + len(alias_mounts)
+"#;
+        let program = parse(&tokenize(source).unwrap()).unwrap();
+        assert_eq!(interpreter.execute(&program).unwrap(), Value::Integer(4));
         let _ = fs::remove_dir_all(root);
     }
 
