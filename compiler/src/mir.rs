@@ -666,6 +666,10 @@ impl Builder {
                 self.error("dictionary literals are not supported by the current MIR backend", *span);
                 None
             }
+            Expr::Tuple { span, .. } => {
+                self.error("tuple literals are not supported by the current MIR backend", *span);
+                None
+            }
             Expr::Identifier { name, span } => self.emit(
                 block,
                 InstructionKind::Load { name: name.clone() },
