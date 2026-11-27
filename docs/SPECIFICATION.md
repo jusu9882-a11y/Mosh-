@@ -2,7 +2,7 @@
 
 - **Version:** 0.1 (initial draft)
 - **Status:** Design baseline; initial name-resolution and scope rules in §4.1 are fixed
-- **Category:** General-purpose compiled programming language
+- **Category:** General-purpose interpreter-first programming language
 
 The words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** describe intended requirements at this draft stage. A requirement is not implemented merely because it appears here.
 
@@ -11,7 +11,8 @@ The words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** describe intended requ
 Mosh is an independent programming language intended to provide:
 
 - readable, productive source code;
-- ahead-of-time compilation to native machine code;
+- a practical tree-walk interpreter as the first execution engine;
+- gradual evolution toward bytecode and optional native compilation;
 - static typing with type inference;
 - ownership-based resource management;
 - direct low-level memory and hardware facilities;
@@ -27,9 +28,10 @@ Mosh is not a Python wrapper, a database language, or a web framework.
 | Type system | Static, with inference |
 | Safe memory model | Ownership and borrowing |
 | Low-level access | Raw pointers and explicit unsafe operations |
-| Code generation | LLVM |
-| Initial compilation model | Ahead-of-time |
-| Initial executable model | Native target executables |
+| Initial execution engine | Rust tree-walk interpreter |
+| Next execution engine | Bytecode virtual machine (planned) |
+| Native backend | LLVM (later milestone) |
+| Initial execution model | Interpret `.mosh` source directly |
 
 These decisions establish direction. Detailed semantics remain open until specified and tested.
 
@@ -59,22 +61,24 @@ let count: Int = 3 @ A trailing comment
 
 ## 4. Compiler architecture
 
-The intended compiler pipeline is:
+The first execution pipeline is:
 
-1. Source loading and diagnostics.
-2. Lexical analysis (lexer).
-3. Parsing into an abstract syntax tree (AST).
-4. Name and module resolution.
-5. Semantic analysis.
-6. Static type checking and type inference.
-7. Ownership and borrow checking for safe code.
-8. Lowering into Mosh intermediate representation (MIR).
-9. Mosh-level optimization and validation.
-10. LLVM IR generation.
-11. LLVM optimization and native code generation.
-12. Linking into an executable or library.
+1. Load `.mosh` source and track source locations.
+2. Lexical analysis.
+3. Parse into an abstract syntax tree (AST).
+4. Execute the AST with the Rust tree-walk interpreter.
 
-The compiler is implemented in Rust. LLVM is the initial backend, not the definition of Mosh's language semantics or runtime.
+The longer-term compilation pipeline is planned as a separate execution path:
+
+1. Name and module resolution.
+2. Static type checking and type inference.
+3. Ownership and borrow checking for safe code.
+4. Lowering into Mosh intermediate representation (MIR).
+5. Bytecode generation and virtual-machine execution.
+6. Mosh-level optimization and validation.
+7. LLVM IR generation, optimization, native code generation, and linking.
+
+The interpreter is the first usable execution engine. LLVM is a later backend, not the definition of Mosh's language semantics or runtime.
 
 
 ### 4.1 Fixed initial name-resolution and scope rules
@@ -112,7 +116,7 @@ The following rules are approved and fixed for the initial primitive type checke
 12. Unary `-` accepts numeric operands; unary `!` accepts `Bool`.
 13. Type errors MUST report the expected and actual types where applicable, together with a source location.
 
-The initial checker recognizes `print` as a provisional polymorphic built-in that accepts values and returns `Unit`; this does not finalize the standard-library design. Iterable/collection typing, member access, indexing, pointers, structures, enumerations, generics, and ownership/borrow checking are outside this primitive-type milestone. The exact width and signedness of `Int`, and the representation/precision of `Float`, remain open decisions.
+The initial checker recognizes `print` as a provisional polymorphic built-in that accepts values and returns `Unit`; this does not finalize the standard-library design. Collection typing, member access, indexing, pointers, structures, enumerations, generics, and ownership/borrow checking are outside this primitive-type milestone. The interpreter currently supports list literals and runtime list operations, but this does not yet mean that lists are represented in the static type system or lowered by MIR. The exact width and signedness of `Int`, and the representation/precision of `Float`, remain open decisions.
 
 Mosh uses static typing. The compiler MAY infer a type when it can do so unambiguously.
 
