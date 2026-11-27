@@ -410,6 +410,10 @@ impl Checker {
                 for (key, value) in entries { self.expression(key); self.expression(value); }
                 Type::Unknown
             }
+            Expr::Tuple { elements, .. } => {
+                for element in elements { self.expression(element); }
+                Type::Unknown
+            }
             Expr::Identifier { name, .. } => match self.lookup(name) {
                 Some(variable) => variable.ty,
                 None => Type::Unknown,
@@ -468,7 +472,7 @@ impl Checker {
                     span: callee_span,
                 } = callee.as_ref()
                 {
-                    if matches!(name.as_str(), "print" | "input" | "len" | "push" | "pop" | "keys" | "has_key" | "remove") {
+                    if matches!(name.as_str(), "print" | "input" | "len" | "push" | "pop" | "keys" | "has_key" | "remove" | "upper" | "lower" | "trim" | "trim_start" | "trim_end" | "contains" | "starts_with" | "ends_with" | "replace" | "split" | "join") {
                         for argument in arguments { self.expression(argument); }
                         return match name.as_str() {
                             "len" => Type::Int,
@@ -476,7 +480,7 @@ impl Checker {
                             "print" | "push" => Type::Unit,
                             "pop" | "remove" => Type::Unknown,
                             "keys" => Type::Unknown,
-                            "has_key" => Type::Bool,
+                            "has_key" | "contains" | "starts_with" | "ends_with" => Type::Bool,
                             _ => Type::Unknown,
                         };
                     }
@@ -640,6 +644,7 @@ fn expr_span(expression: &Expr) -> Span {
         | Expr::Boolean { span, .. }
         | Expr::List { span, .. }
         | Expr::Dict { span, .. }
+        | Expr::Tuple { span, .. }
         | Expr::Unary { span, .. }
         | Expr::Binary { span, .. }
         | Expr::Call { span, .. }
