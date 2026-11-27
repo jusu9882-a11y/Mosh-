@@ -70,11 +70,12 @@ fn run_file(path: &str) -> ExitCode {
 
 fn run_repl() -> ExitCode {
     println!("Mosh {VERSION} interactive interpreter");
-    println!("Type :quit or :q to exit.");
+    println!("Type :help for commands; :quit or :q to exit.");
     let stdin = io::stdin();
     let mut interpreter = interpreter::Interpreter::new();
     interpreter.set_echo(true);
     let mut line = String::new();
+
     loop {
         print!(">>> ");
         if io::stdout().flush().is_err() { return ExitCode::from(1); }
@@ -84,10 +85,36 @@ fn run_repl() -> ExitCode {
             Ok(_) => {}
             Err(error) => { eprintln!("mosh: input error: {error}"); return ExitCode::from(1); }
         }
-        let source = line.trim_end_matches(['\r', '\n']);
-        if source == ":quit" || source == ":q" { break; }
-        if source.is_empty() { continue; }
-        let Some(program) = compile_frontend("<repl>", source) else { continue; };
+
+        let first = line.trim_end_matches(['\\r', '\\n']);
+        if first == ":quit" || first == ":q" { break; }
+        if first == ":help" {
+            println!("Enter Mosh expressions or statements.");
+            println!("For if/else, while, for, and function blocks, finish with a blank line.");
+            println!("Commands: :help, :quit, :q");
+            continue;
+        }
+        if first.trim().is_empty() { continue; }
+
+        let mut source = first.to_owned();
+        if first.trim_end().ends_with(':') {
+            loop {
+                print!("... ");
+                if io::stdout().flush().is_err() { return ExitCode::from(1); }
+                line.clear();
+                match stdin.lock().read_line(&mut line) {
+                    Ok(0) => break,
+                    Ok(_) => {}
+                    Err(error) => { eprintln!("mosh: input error: {error}"); return ExitCode::from(1); }
+                }
+                let continuation = line.trim_end_matches(['\\r', '\\n']);
+                if continuation.trim().is_empty() { break; }
+                source.push('\\n');
+                source.push_str(continuation);
+            }
+        }
+
+        let Some(program) = compile_frontend("<repl>", &source) else { continue; };
         match interpreter.execute(&program) {
             Ok(_) => {}
             Err(error) => eprintln!("mosh: runtime error: {error}"),
