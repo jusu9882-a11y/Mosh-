@@ -472,15 +472,15 @@ impl Checker {
                     span: callee_span,
                 } = callee.as_ref()
                 {
-                    if matches!(name.as_str(), "print" | "input" | "len" | "push" | "pop" | "keys" | "has_key" | "remove" | "upper" | "lower" | "trim" | "trim_start" | "trim_end" | "contains" | "starts_with" | "ends_with" | "replace" | "split" | "join") {
+                    if matches!(name.as_str(), "print" | "input" | "len" | "push" | "pop" | "keys" | "has_key" | "remove" | "upper" | "lower" | "trim" | "trim_start" | "trim_end" | "contains" | "starts_with" | "ends_with" | "replace" | "split" | "join" | "read_text" | "write_text" | "append_text" | "file_exists" | "create_dir") {
                         for argument in arguments { self.expression(argument); }
                         return match name.as_str() {
                             "len" => Type::Int,
-                            "input" => Type::String,
-                            "print" | "push" => Type::Unit,
+                            "input" | "read_text" => Type::String,
+                            "print" | "push" | "write_text" | "append_text" | "create_dir" => Type::Unit,
                             "pop" | "remove" => Type::Unknown,
                             "keys" => Type::Unknown,
-                            "has_key" | "contains" | "starts_with" | "ends_with" => Type::Bool,
+                            "has_key" | "contains" | "starts_with" | "ends_with" | "file_exists" => Type::Bool,
                             _ => Type::Unknown,
                         };
                     }
