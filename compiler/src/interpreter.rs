@@ -139,20 +139,32 @@ impl Interpreter {
                 Ok(Flow::Continue)
             }
             Stmt::Assign { target, value, span } => {
-                let Expr::Identifier { name, .. } = target else {
-                    return Err(self.error("only variable assignment is supported currently", *span));
-                };
                 let next = self.eval(value)?;
-                for scope in self.scopes.iter_mut().rev() {
-                    if let Some(binding) = scope.get_mut(name) {
-                        if !binding.mutable {
-                            return Err(RuntimeError { message: format!("cannot assign to immutable variable '{name}'; declare it with 'mut'"), span: *span });
+                match target {
+                    Expr::Identifier { name, .. } => {
+                        for scope in self.scopes.iter_mut().rev() {
+                            if let Some(binding) = scope.get_mut(name) {
+                                if !binding.mutable {
+                                    return Err(RuntimeError { message: format!("cannot assign to immutable variable '{name}'; declare it with 'mut'"), span: *span });
+                                }
+                                binding.value = next;
+                                return Ok(Flow::Continue);
+                            }
                         }
-                        binding.value = next;
-                        return Ok(Flow::Continue);
+                        Err(self.error(&format!("undefined variable '{name}'"), *span))
                     }
+                    Expr::Index { object, index, .. } => {
+                        let object = self.eval(object)?;
+                        let index = self.eval(index)?;
+                        let Value::List(values) = object else {
+                            return Err(self.error("indexed assignment currently requires a list", *span));
+                        };
+                        let index = self.normalize_index(&index, values.borrow().len(), *span)?;
+                        values.borrow_mut()[index] = next;
+                        Ok(Flow::Continue)
+                    }
+                    _ => Err(self.error("assignment target must be a variable or list index", *span)),
                 }
-                Err(self.error(&format!("undefined variable '{name}'"), *span))
             }
             Stmt::Expression { expression, .. } => {
                 self.eval(expression)?;
@@ -461,6 +473,29 @@ mod tests {
     #[test]
     fn decodes_string_escapes_and_concatenates() {
         assert_eq!(run("let name = \"Mo\\nsh\"\nname + \"!\"\n").unwrap(), Value::String("Mo\nsh!".into()));
+    }
+
+    #[test]
+    fn creates_lists_and_reads_positive_and_negative_indexes() {
+        assert_eq!(run("let values = [10, 20, 30]\nvalues[0]\n").unwrap(), Value::Integer(10));
+        assert_eq!(run("let values = [10, 20, 30]\nvalues[-1]\n").unwrap(), Value::Integer(30));
+    }
+
+    #[test]
+    fn mutates_list_items_and_supports_push_pop_and_len() {
+        assert_eq!(run("mut values = [1, 2]\nvalues[0] = 9\npush(values, 3)\nlet removed = pop(values)\nlen(values) + values[0] + removed\n").unwrap(), Value::Integer(13));
+    }
+
+    #[test]
+    fn iterates_over_lists_and_strings() {
+        assert_eq!(run("mut total = 0\nfor value in [1, 2, 3, 4]:\n    total = total + value\ntotal\n").unwrap(), Value::Integer(10));
+        assert_eq!(run("mut count = 0\nfor character in \"mosh\":\n    count = count + 1\ncount\n").unwrap(), Value::Integer(4));
+    }
+
+    #[test]
+    fn reports_invalid_list_indexes_and_empty_pop() {
+        assert!(run("let values = [1]\nvalues[2]\n").unwrap_err().message.contains("out of range"));
+        assert!(run("let values = []\npop(values)\n").unwrap_err().message.contains("empty list"));
     }
 
     #[test]
