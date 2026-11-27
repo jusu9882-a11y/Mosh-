@@ -1253,6 +1253,40 @@ mod tests {
     }
 
     #[test]
+    fn exposes_device_namespace_without_claiming_unregistered_hardware() {
+        assert_eq!(
+            run("device.camera.is_supported()\\n").unwrap(),
+            Value::Boolean(false)
+        );
+        assert_eq!(
+            run("device.wifi_direct.is_available()\\n").unwrap(),
+            Value::Boolean(false)
+        );
+        assert_eq!(
+            run("device.camera.permission()\\n").unwrap(),
+            Value::String("unknown".into())
+        );
+        let status = run("device.camera.capabilities()\\n").unwrap();
+        let Value::Dict(status) = status else { panic!("expected capability dictionary"); };
+        assert_eq!(status.borrow().get("supported"), Some(&Value::Boolean(false)));
+        assert_eq!(status.borrow().get("available"), Some(&Value::Boolean(false)));
+        assert!(matches!(status.borrow().get("limitations"), Some(Value::List(_))));
+    }
+
+    #[test]
+    fn device_namespace_rejects_unknown_methods_and_arguments() {
+        assert!(run("device.camera.capture()\\n").unwrap_err().message.contains("no method"));
+        assert!(run("device.camera.is_supported(1)\\n").unwrap_err().message.contains("expects no arguments"));
+    }
+
+    #[test]
+    fn device_permission_request_is_an_explicit_unsupported_error_without_adapter() {
+        let source = "mut message = \\"\\"\\ntry:\\n    device.camera.request_permission()\\ncatch error:\\n    message = error\\nmessage\\n";
+        let result = run(source).unwrap();
+        assert!(matches!(result, Value::String(message) if message.contains("Unsupported")));
+    }
+
+    #[test]
     fn reports_undefined_names() {
         assert!(run("unknown\n").unwrap_err().message.contains("undefined variable"));
     }
