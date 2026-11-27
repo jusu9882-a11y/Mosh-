@@ -48,7 +48,7 @@ cargo build --bin mosh
 Run a source file:
 
 ```sh
-cargo run --bin mosh -- run examples/collections.mosh
+cargo run --bin mosh -- run ../examples/collections.mosh
 ```
 
 Start the interactive shell:
