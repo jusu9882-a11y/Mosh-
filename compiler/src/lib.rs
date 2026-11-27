@@ -4,6 +4,7 @@
 //! itself does not assume that a platform or hardware resource is available.
 
 pub mod device;
+pub mod ffi;
 pub mod interpreter;
 pub mod lexer;
 pub mod parser;
