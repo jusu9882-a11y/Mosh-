@@ -1,0 +1,18 @@
+@ Runtime failures can be handled with try/catch.
+function read_notes(path: String) -> String:
+    return read_text(path)
+
+mut message = ""
+try:
+    let contents = read_notes("missing-notes.txt")
+    print(contents)
+catch error:
+    message = error
+    print("Could not read notes:")
+    print(message)
+
+try:
+    raise "a deliberate application error"
+catch error:
+    print("Caught:")
+    print(error)
