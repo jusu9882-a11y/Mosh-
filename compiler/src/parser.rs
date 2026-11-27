@@ -255,7 +255,9 @@ impl<'a> Parser<'a> {
         match self.kind() {
             TokenKind::Function => self.function(),
             TokenKind::Let | TokenKind::Mut => self.binding(false),
-            TokenKind::Return => self.return_stmt(),\n            TokenKind::Raise => self.raise_stmt(),\n            TokenKind::Try => self.try_stmt(),
+            TokenKind::Return => self.return_stmt(),
+            TokenKind::Raise => self.raise_stmt(),
+            TokenKind::Try => self.try_stmt(),
             TokenKind::If => self.if_stmt(),
             TokenKind::While => self.while_stmt(),
             TokenKind::For => self.for_stmt(),
