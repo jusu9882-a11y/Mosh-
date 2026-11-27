@@ -250,6 +250,9 @@ impl Analyzer {
             Expr::List { elements, .. } => {
                 for element in elements { self.expression(element); }
             }
+            Expr::Dict { entries, .. } => {
+                for (key, value) in entries { self.expression(key); self.expression(value); }
+            }
             Expr::Unary { operand, .. } => self.expression(operand),
             Expr::Binary { left, right, .. } => {
                 self.expression(left);
@@ -260,7 +263,7 @@ impl Analyzer {
             } => {
                 if let Expr::Identifier { name, span } = callee.as_ref() {
                     // print is the compiler's initial built-in output function.
-                    if !matches!(name.as_str(), "print" | "input" | "len" | "push" | "pop") && self.lookup(name).is_none() {
+                    if !matches!(name.as_str(), "print" | "input" | "len" | "push" | "pop" | "keys" | "has_key" | "remove") && self.lookup(name).is_none() {
                         self.error(format!("call to undefined function '{name}'"), *span);
                     }
                     if matches!(self.lookup(name), Some(SymbolKind::Variable { .. })) {
@@ -294,6 +297,7 @@ fn expr_span(expression: &Expr) -> Span {
         | Expr::String { span, .. }
         | Expr::Boolean { span, .. }
         | Expr::List { span, .. }
+        | Expr::Dict { span, .. }
         | Expr::Unary { span, .. }
         | Expr::Binary { span, .. }
         | Expr::Call { span, .. }
