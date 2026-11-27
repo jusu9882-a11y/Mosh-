@@ -3,6 +3,8 @@ use crate::parser::{Expr, Program, Stmt};
 use std::collections::HashMap;
 use std::fmt;
 use std::io::{self, Write};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -10,6 +12,7 @@ pub enum Value {
     Float(f64),
     String(String),
     Boolean(bool),
+    List(Rc<RefCell<Vec<Value>>>),
     Nil,
 }
 
@@ -20,6 +23,15 @@ impl fmt::Display for Value {
             Self::Float(v) => write!(f, "{v}"),
             Self::String(v) => write!(f, "{v}"),
             Self::Boolean(v) => write!(f, "{v}"),
+            Self::List(values) => {
+                let values = values.borrow();
+                write!(f, "[")?;
+                for (index, value) in values.iter().enumerate() {
+                    if index > 0 { write!(f, ", ")?; }
+                    write!(f, "{value}")?;
+                }
+                write!(f, "]")
+            }
             Self::Nil => write!(f, "nil"),
         }
     }
@@ -174,7 +186,24 @@ impl Interpreter {
                 Some(expr) => self.eval(expr)?,
                 None => Value::Nil,
             })),
-            Stmt::For { span, .. } => Err(self.error("for-loops are parsed but iterable values are not implemented yet", *span)),
+            Stmt::For { name, iterable, body, span } => {
+                let values = match self.eval(iterable)? {
+                    Value::List(values) => values.borrow().clone(),
+                    Value::String(value) => value.chars().map(|ch| Value::String(ch.to_string())).collect(),
+                    _ => return Err(self.error("for-loop requires a list or string", *span)),
+                };
+                if values.len() > 1_000_000 {
+                    return Err(self.error("for-loop iteration safety limit exceeded (1,000,000)", *span));
+                }
+                for value in values {
+                    self.scopes.push(HashMap::new());
+                    self.scopes.last_mut().unwrap().insert(name.clone(), Binding { value, mutable: false });
+                    let result = self.execute_block(body, true);
+                    self.scopes.pop();
+                    if let flow @ Flow::Return(_) = result? { return Ok(flow); }
+                }
+                Ok(Flow::Continue)
+            },
         }
     }
 
@@ -187,6 +216,10 @@ impl Interpreter {
             Expr::String { value, span } => decode_string(value)
                 .map(Value::String).ok_or_else(|| self.error("invalid string literal", *span)),
             Expr::Boolean { value, .. } => Ok(Value::Boolean(*value)),
+            Expr::List { elements, .. } => {
+                let values = elements.iter().map(|element| self.eval(element)).collect::<Result<Vec<_>, _>>()?;
+                Ok(Value::List(Rc::new(RefCell::new(values))))
+            }
             Expr::Identifier { name, span } => {
                 for scope in self.scopes.iter().rev() {
                     if let Some(binding) = scope.get(name) { return Ok(binding.value.clone()); }
@@ -216,13 +249,46 @@ impl Interpreter {
                 let args = arguments.iter().map(|arg| self.eval(arg)).collect::<Result<Vec<_>, _>>()?;
                 self.call(name, args, *span)
             }
-            Expr::Member { span, .. } | Expr::Index { span, .. } =>
-                Err(self.error("member access and indexing are not implemented yet", *span)),
+            Expr::Index { object, index, span } => {
+                let object = self.eval(object)?;
+                let index = self.eval(index)?;
+                let Value::List(values) = object else {
+                    return Err(self.error("indexing currently requires a list", *span));
+                };
+                let index = self.normalize_index(&index, values.borrow().len(), *span)?;
+                Ok(values.borrow()[index].clone())
+            }
+            Expr::Member { span, .. } =>
+                Err(self.error("member access is not implemented yet", *span)),
         }
     }
 
     fn call(&mut self, name: &str, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
         match name {
+            "len" => {
+                if args.len() != 1 { return Err(self.error("len() expects exactly one argument", span)); }
+                let length = match &args[0] {
+                    Value::List(values) => values.borrow().len(),
+                    Value::String(value) => value.chars().count(),
+                    _ => return Err(self.error("len() expects a list or string", span)),
+                };
+                Ok(Value::Integer(length as i64))
+            }
+            "push" => {
+                if args.len() != 2 { return Err(self.error("push() expects a list and a value", span)); }
+                let Value::List(values) = &args[0] else {
+                    return Err(self.error("push() first argument must be a list", span));
+                };
+                values.borrow_mut().push(args[1].clone());
+                Ok(Value::Nil)
+            }
+            "pop" => {
+                if args.len() != 1 { return Err(self.error("pop() expects exactly one list", span)); }
+                let Value::List(values) = &args[0] else {
+                    return Err(self.error("pop() argument must be a list", span));
+                };
+                values.borrow_mut().pop().ok_or_else(|| self.error("cannot pop from an empty list", span))
+            }
             "print" => {
                 for (index, value) in args.iter().enumerate() {
                     if index > 0 { print!(" "); }
@@ -300,8 +366,20 @@ impl Interpreter {
             Value::Integer(v) => *v != 0,
             Value::Float(v) => *v != 0.0,
             Value::String(v) => !v.is_empty(),
+            Value::List(v) => !v.borrow().is_empty(),
             Value::Nil => false,
         }
+    }
+
+    fn normalize_index(&self, value: &Value, length: usize, span: Span) -> Result<usize, RuntimeError> {
+        let Value::Integer(index) = value else {
+            return Err(self.error("list index must be an integer", span));
+        };
+        let normalized = if *index < 0 { length as i64 + *index } else { *index };
+        if normalized < 0 || normalized as usize >= length {
+            return Err(self.error(&format!("list index {index} is out of range for length {length}"), span));
+        }
+        Ok(normalized as usize)
     }
 
     fn error(&self, message: &str, span: Span) -> RuntimeError {
