@@ -258,7 +258,7 @@ impl Analyzer {
     fn expression(&mut self, expression: &Expr) {
         match expression {
             Expr::Identifier { name, span } => {
-                if self.lookup(name).is_none() {
+                if name != "device" && self.lookup(name).is_none() {
                     self.error(format!("use of undefined name '{name}'"), *span);
                 }
             }
@@ -336,6 +336,12 @@ mod tests {
         let tokens = tokenize(source).expect("test source should tokenize");
         let program = parse(&tokens).expect("test source should parse");
         analyze(&program)
+    }
+
+    #[test]
+    fn accepts_device_namespace_references() {
+        assert!(checked("device.camera.is_supported()\n").is_ok());
+        assert!(checked("let info = device.battery.capabilities()\n").is_ok());
     }
 
     #[test]

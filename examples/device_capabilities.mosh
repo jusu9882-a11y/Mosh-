@@ -1,0 +1,15 @@
+@ Device capabilities are queried from the active host adapter.
+@ The standard CLI host has no native adapter, so support is reported honestly.
+
+let camera = device.camera.capabilities()
+print(camera["module"])
+print(camera["supported"])
+print(camera["available"])
+print(camera["permission"])
+
+if device.camera.is_supported():
+    print(device.camera.permission())
+else:
+    print(camera["limitations"])
+
+print(device.wifi_direct.is_supported())
