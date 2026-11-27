@@ -406,6 +406,10 @@ impl Checker {
                 for element in elements { self.expression(element); }
                 Type::Unknown
             }
+            Expr::Dict { entries, .. } => {
+                for (key, value) in entries { self.expression(key); self.expression(value); }
+                Type::Unknown
+            }
             Expr::Identifier { name, .. } => match self.lookup(name) {
                 Some(variable) => variable.ty,
                 None => Type::Unknown,
@@ -464,13 +468,15 @@ impl Checker {
                     span: callee_span,
                 } = callee.as_ref()
                 {
-                    if matches!(name.as_str(), "print" | "input" | "len" | "push" | "pop") {
+                    if matches!(name.as_str(), "print" | "input" | "len" | "push" | "pop" | "keys" | "has_key" | "remove") {
                         for argument in arguments { self.expression(argument); }
                         return match name.as_str() {
                             "len" => Type::Int,
                             "input" => Type::String,
                             "print" | "push" => Type::Unit,
-                            "pop" => Type::Unknown,
+                            "pop" | "remove" => Type::Unknown,
+                            "keys" => Type::Unknown,
+                            "has_key" => Type::Bool,
                             _ => Type::Unknown,
                         };
                     }
@@ -633,6 +639,7 @@ fn expr_span(expression: &Expr) -> Span {
         | Expr::String { span, .. }
         | Expr::Boolean { span, .. }
         | Expr::List { span, .. }
+        | Expr::Dict { span, .. }
         | Expr::Unary { span, .. }
         | Expr::Binary { span, .. }
         | Expr::Call { span, .. }
