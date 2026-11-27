@@ -208,6 +208,9 @@ impl Checker {
 
     fn statement(&mut self, statement: &Stmt) {
         match statement {
+            Stmt::Import { span, .. } => {
+                self.error("module imports are supported by the interpreter but not yet by the static checker", *span);
+            }
             Stmt::Function {
                 name,
                 params,
