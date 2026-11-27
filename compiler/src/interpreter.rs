@@ -484,7 +484,7 @@ mod tests {
 
     #[test]
     fn mutates_list_items_and_supports_push_pop_and_len() {
-        assert_eq!(run("mut values = [1, 2]\nvalues[0] = 9\npush(values, 3)\nlet removed = pop(values)\nlen(values) + values[0] + removed\n").unwrap(), Value::Integer(13));
+        assert_eq!(run("mut values = [1, 2]\nvalues[0] = 9\npush(values, 3)\nlet removed = pop(values)\nlen(values) + values[0] + removed\n").unwrap(), Value::Integer(14));
     }
 
     #[test]
