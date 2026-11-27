@@ -933,6 +933,16 @@ mod tests {
     }
 
     #[test]
+    fn parses_list_literals_with_nested_values_and_trailing_commas() {
+        let program = parsed("let values = [1, [2, 3],]\\n").unwrap();
+        let Stmt::Let { value: Some(Expr::List { elements, .. }), .. } = &program.statements[0] else {
+            panic!("expected list literal initializer");
+        };
+        assert_eq!(elements.len(), 2);
+        assert!(matches!(&elements[1], Expr::List { elements, .. } if elements.len() == 2));
+    }
+
+    #[test]
     fn parses_indexing_and_unary_expressions() {
         let p = parsed("let value = -items[0]\n").unwrap();
         assert!(matches!(
