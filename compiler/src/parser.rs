@@ -92,6 +92,10 @@ pub enum Expr {
         elements: Vec<Expr>,
         span: Span,
     },
+    Dict {
+        entries: Vec<(Expr, Expr)>,
+        span: Span,
+    },
     Unary {
         operator: TokenKind,
         operand: Box<Expr>,
@@ -574,6 +578,22 @@ impl<'a> Parser<'a> {
                 let close = self.expect(TokenKind::RightBracket, "expected ']' after list elements")?.span;
                 Ok(Expr::List { elements, span: join(token.span, close) })
             }
+            TokenKind::LeftBrace => {
+                let mut entries = Vec::new();
+                if !self.check(&TokenKind::RightBrace) {
+                    loop {
+                        let key = self.expression(0)?;
+                        if !matches!(key, Expr::String { .. }) { return Err(ParseError { message: "dictionary keys must be strings".into(), span: expr_span(&key) }); }
+                        self.expect(TokenKind::Colon, "expected ':' after dictionary key")?;
+                        let value = self.expression(0)?;
+                        entries.push((key, value));
+                        if !self.take(&TokenKind::Comma) { break; }
+                        if self.check(&TokenKind::RightBrace) { break; }
+                    }
+                }
+                let close = self.expect(TokenKind::RightBrace, "expected '}' after dictionary entries")?.span;
+                Ok(Expr::Dict { entries, span: join(token.span, close) })
+            }
             _ => Err(ParseError {
                 message: format!("expected expression, found {:?}", token.kind),
                 span: token.span,
@@ -713,6 +733,7 @@ fn expr_span(expr: &Expr) -> Span {
         | Expr::String { span, .. }
         | Expr::Boolean { span, .. }
         | Expr::List { span, .. }
+        | Expr::Dict { span, .. }
         | Expr::Unary { span, .. }
         | Expr::Binary { span, .. }
         | Expr::Call { span, .. }
@@ -940,6 +961,15 @@ mod tests {
         };
         assert_eq!(elements.len(), 2);
         assert!(matches!(&elements[1], Expr::List { elements, .. } if elements.len() == 2));
+    }
+
+    #[test]
+    fn parses_dictionary_literals_with_string_keys_and_trailing_commas() {
+        let program = parsed("let user = {\"name\": \"Mosh\", \"scores\": [1, 2],}\n").unwrap();
+        let Stmt::Let { value: Some(Expr::Dict { entries, .. }), .. } = &program.statements[0] else { panic!("expected dictionary literal initializer"); };
+        assert_eq!(entries.len(), 2);
+        assert!(matches!(&entries[0].0, Expr::String { .. }));
+        assert!(parsed("let bad = {1: \"no\"}\n").is_err());
     }
 
     #[test]
