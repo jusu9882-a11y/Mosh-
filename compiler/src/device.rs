@@ -151,6 +151,13 @@ pub trait DeviceBackend: Send + Sync {
         Err(DeviceError::unsupported("device.battery", "read"))
     }
 
+    fn read_storage_volumes(&self) -> Result<Vec<StorageVolume>, DeviceError> {
+        if !matches!(self.platform, Platform::Android | Platform::Linux) {
+            return Err(DeviceError::unsupported("device.storage", "volumes"));
+        }
+        self.read_storage_from_proc()
+    }
+
     fn read_memory(&self) -> Result<MemoryReading, DeviceError> {
         Err(DeviceError::unsupported("device.memory", "read"))
     }
@@ -158,6 +165,19 @@ pub trait DeviceBackend: Send + Sync {
     fn read_cpu(&self) -> Result<CpuReading, DeviceError> {
         Err(DeviceError::unsupported("device.cpu", "read"))
     }
+
+    fn read_storage_volumes(&self) -> Result<Vec<StorageVolume>, DeviceError> {
+        Err(DeviceError::unsupported("device.storage", "volumes"))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageVolume {
+    pub source: String,
+    pub mount_point: String,
+    pub filesystem: String,
+    pub options: String,
+    pub read_only: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -225,6 +245,28 @@ impl SysfsBackend {
             }
         }
         None
+    }
+
+    fn read_storage_from_proc(&self) -> Result<Vec<StorageVolume>, DeviceError> {
+        let contents = fs::read_to_string(self.proc_root.join("mounts")).map_err(|error| {
+            DeviceError::new(DeviceErrorCode::NotAvailable, "device.storage", "volumes", format!("cannot read /proc/mounts: {error}"), true)
+        })?;
+        let mut volumes = Vec::new();
+        for line in contents.lines() {
+            let fields = line.split_whitespace().collect::<Vec<_>>();
+            if fields.len() < 4 {
+                continue;
+            }
+            let options = fields[3].to_owned();
+            volumes.push(StorageVolume {
+                source: decode_mount_field(fields[0]),
+                mount_point: decode_mount_field(fields[1]),
+                filesystem: fields[2].to_owned(),
+                read_only: options.split(',').any(|option| option == "ro"),
+                options,
+            });
+        }
+        Ok(volumes)
     }
 
     fn read_memory_from_proc(&self) -> Result<MemoryReading, DeviceError> {
@@ -304,6 +346,17 @@ impl DeviceBackend for SysfsBackend {
     fn capability(&self, module: &str) -> Capability {
         if !matches!(self.platform, Platform::Android | Platform::Linux) {
             return Capability::unsupported(module, self.platform, "this procfs/sysfs adapter is available only on Linux and Android");
+        }
+        if module == "device.storage" || module == "device.fs" {
+            return match self.read_storage_from_proc() {
+                Ok(volumes) => Capability {
+                    module: module.into(), platform: self.platform, supported: true, available: !volumes.is_empty(),
+                    permission: PermissionState::NotRequired,
+                    features: vec!["volumes".into(), "mount_points".into(), "filesystem_types".into(), "read_only_flags".into()],
+                    limitations: Vec::new(),
+                },
+                Err(error) => Capability::unsupported(module, self.platform, error.message),
+            };
         }
         if module == "device.memory" || module == "device.ram" {
             return match self.read_memory_from_proc() {
@@ -416,6 +469,13 @@ impl DeviceBackend for SysfsBackend {
     }
 }
 
+fn decode_mount_field(value: &str) -> String {
+    value.replace("\\040", " ")
+        .replace("\\011", "\t")
+        .replace("\\012", "\n")
+        .replace("\\134", "\\")
+}
+
 /// Safe default for CLI/REPL and hosts that have not installed a native bridge.
 #[derive(Debug, Default)]
 pub struct UnsupportedBackend;
@@ -469,6 +529,17 @@ impl DeviceRegistry {
             Platform::Android | Platform::Linux => Self::new(Arc::new(SysfsBackend::system())),
             _ => Self::unsupported(),
         }
+    }
+
+    pub fn read_storage_volumes(&self) -> Result<Vec<StorageVolume>, DeviceError> {
+        let capability = self.backend.capability("device.storage");
+        if !capability.supported {
+            return Err(DeviceError::unsupported("device.storage", "volumes"));
+        }
+        if !capability.available {
+            return Err(DeviceError::new(DeviceErrorCode::NotAvailable, "device.storage", "volumes", "no mounted storage volumes were reported", true));
+        }
+        self.backend.read_storage_volumes()
     }
 
     pub fn read_memory(&self) -> Result<MemoryReading, DeviceError> {
