@@ -496,7 +496,7 @@ impl Interpreter {
                 values.insert("technology".into(), reading.technology.map(Value::String).unwrap_or(Value::Nil));
                 Ok(Value::Dict(Rc::new(RefCell::new(values))))
             }
-            "read" => Err(self.error(&format!("device.{module}.read() is not implemented by the active backend"), span))
+            "read" => Err(self.error(&format!("device.{module}.read() is not implemented by the active backend"), span)),
             "request_permission" => {
                 let state = self.device_registry.request_permission(&name)
                     .map_err(|error| self.error(&error.to_string(), span))?;
