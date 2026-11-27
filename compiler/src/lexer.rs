@@ -20,6 +20,8 @@ pub enum TokenKind {
     String,
 
     Function,
+    Import,
+    As,
     Return,
     Raise,
     Try,
@@ -259,6 +261,8 @@ impl<'a> Lexer<'a> {
         let text = &self.source[start.start..self.position];
         let kind = match text {
             "function" => TokenKind::Function,
+            "import" => TokenKind::Import,
+            "as" => TokenKind::As,
             "return" => TokenKind::Return,
             "raise" => TokenKind::Raise,
             "try" => TokenKind::Try,
