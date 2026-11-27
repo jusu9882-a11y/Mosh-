@@ -635,6 +635,13 @@ impl Builder {
                 );
                 current
             }
+            Stmt::Raise { span, .. } | Stmt::Try { span, .. } => {
+                self.error(
+                    "exception handling is supported by the interpreter but not yet lowered to MIR",
+                    *span,
+                );
+                current
+            }
             Stmt::Function { span, .. } => {
                 self.error(
                     "nested function lowering is not supported in the initial MIR",
