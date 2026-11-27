@@ -86,7 +86,7 @@ fn run_repl() -> ExitCode {
             Err(error) => { eprintln!("mosh: input error: {error}"); return ExitCode::from(1); }
         }
 
-        let first = line.trim_end_matches(['\\r', '\\n']);
+        let first = line.trim_end_matches(['\r', '\n']);
         if first == ":quit" || first == ":q" { break; }
         if first == ":help" {
             println!("Enter Mosh expressions or statements.");
@@ -107,9 +107,9 @@ fn run_repl() -> ExitCode {
                     Ok(_) => {}
                     Err(error) => { eprintln!("mosh: input error: {error}"); return ExitCode::from(1); }
                 }
-                let continuation = line.trim_end_matches(['\\r', '\\n']);
+                let continuation = line.trim_end_matches(['\r', '\n']);
                 if continuation.trim().is_empty() { break; }
-                source.push('\\n');
+                source.push('\n');
                 source.push_str(continuation);
             }
         }
