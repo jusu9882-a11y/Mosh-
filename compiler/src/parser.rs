@@ -712,6 +712,7 @@ fn expr_span(expr: &Expr) -> Span {
         | Expr::Float { span, .. }
         | Expr::String { span, .. }
         | Expr::Boolean { span, .. }
+        | Expr::List { span, .. }
         | Expr::Unary { span, .. }
         | Expr::Binary { span, .. }
         | Expr::Call { span, .. }
