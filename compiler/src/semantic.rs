@@ -266,7 +266,7 @@ impl Analyzer {
             } => {
                 if let Expr::Identifier { name, span } = callee.as_ref() {
                     // print is the compiler's initial built-in output function.
-                    if !matches!(name.as_str(), "print" | "input" | "len" | "push" | "pop" | "keys" | "has_key" | "remove" | "upper" | "lower" | "trim" | "trim_start" | "trim_end" | "contains" | "starts_with" | "ends_with" | "replace" | "split" | "join") && self.lookup(name).is_none() {
+                    if !matches!(name.as_str(), "print" | "input" | "len" | "push" | "pop" | "keys" | "has_key" | "remove" | "upper" | "lower" | "trim" | "trim_start" | "trim_end" | "contains" | "starts_with" | "ends_with" | "replace" | "split" | "join" | "read_text" | "write_text" | "append_text" | "file_exists" | "create_dir") && self.lookup(name).is_none() {
                         self.error(format!("call to undefined function '{name}'"), *span);
                     }
                     if matches!(self.lookup(name), Some(SymbolKind::Variable { .. })) {
