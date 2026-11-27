@@ -454,7 +454,7 @@ impl Interpreter {
                 match &args[0] {
                     Value::Integer(value) => Ok(Value::Float(*value as f64)),
                     Value::Float(value) => Ok(Value::Float(*value)),
-                    Value::String(value) => value.parse::<f64>().filter(|v| v.is_finite()).map(Value::Float).map_err(|_| self.error("float() cannot convert this string to a finite number", span)),
+                    Value::String(value) => value.parse::<f64>().ok().filter(|v| v.is_finite()).map(Value::Float).ok_or_else(|| self.error("float() cannot convert this string to a finite number", span)),
                     _ => Err(self.error("float() expects an integer, float, or numeric string", span)),
                 }
             }
