@@ -644,6 +644,53 @@ impl Interpreter {
                 let Value::String(path) = &args[0] else { return Err(self.error("create_dir() path must be a string", span)); };
                 fs::create_dir_all(path).map(|_| Value::Nil).map_err(|e| self.error(&format!("create_dir() failed for '{path}': {e}"), span))
             }
+            "path_join" => {
+                if args.is_empty() { return Err(self.error("path_join() expects at least one path string", span)); }
+                let mut path = PathBuf::new();
+                for value in &args {
+                    let Value::String(part) = value else { return Err(self.error("path_join() arguments must be strings", span)); };
+                    path.push(part);
+                }
+                Ok(Value::String(path.to_string_lossy().into_owned()))
+            }
+            "is_file" | "is_dir" => {
+                if args.len() != 1 { return Err(self.error(&format!("{name}() expects one path string"), span)); }
+                let Value::String(path) = &args[0] else { return Err(self.error(&format!("{name}() path must be a string"), span)); };
+                let metadata = fs::metadata(path);
+                Ok(Value::Boolean(metadata.is_ok_and(|m| if name == "is_file" { m.is_file() } else { m.is_dir() })))
+            }
+            "file_size" => {
+                if args.len() != 1 { return Err(self.error("file_size() expects one path string", span)); }
+                let Value::String(path) = &args[0] else { return Err(self.error("file_size() path must be a string", span)); };
+                let size = fs::metadata(path).and_then(|m| {
+                    if !m.is_file() { return Err(io::Error::new(io::ErrorKind::InvalidInput, "path is not a file")); }
+                    i64::try_from(m.len()).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "file is too large"))
+                }).map_err(|e| self.error(&format!("file_size() failed for '{path}': {e}"), span))?;
+                Ok(Value::Integer(size))
+            }
+            "list_dir" => {
+                if args.len() != 1 { return Err(self.error("list_dir() expects one directory path string", span)); }
+                let Value::String(path) = &args[0] else { return Err(self.error("list_dir() path must be a string", span)); };
+                let entries = fs::read_dir(path).map_err(|e| self.error(&format!("list_dir() failed for '{path}': {e}"), span))?;
+                let mut names = entries.map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned()))
+                    .collect::<Result<Vec<_>, _>>().map_err(|e| self.error(&format!("list_dir() failed for '{path}': {e}"), span))?;
+                names.sort();
+                Ok(Value::List(Rc::new(RefCell::new(names.into_iter().map(Value::String).collect()))))
+            }
+            "current_dir" => {
+                if !args.is_empty() { return Err(self.error("current_dir() expects no arguments", span)); }
+                std::env::current_dir().map(|p| Value::String(p.to_string_lossy().into_owned()))
+                    .map_err(|e| self.error(&format!("current_dir() failed: {e}"), span))
+            }
+            "absolute_path" => {
+                if args.len() != 1 { return Err(self.error("absolute_path() expects one path string", span)); }
+                let Value::String(path) = &args[0] else { return Err(self.error("absolute_path() path must be a string", span)); };
+                let path = Path::new(path);
+                let absolute = if path.is_absolute() { path.to_path_buf() } else {
+                    std::env::current_dir().map_err(|e| self.error(&format!("absolute_path() failed: {e}"), span))?.join(path)
+                };
+                Ok(Value::String(absolute.to_string_lossy().into_owned()))
+            }
             "print" => {
                 for (index, value) in args.iter().enumerate() {
                     if index > 0 { print!(" "); }
@@ -1025,6 +1072,37 @@ mod tests {
         assert!(run("read_text(\"/mosh-path-that-does-not-exist/file.txt\")\n").unwrap_err().message.contains("read_text() failed"));
         assert!(run("write_text(1, \"x\")\n").unwrap_err().message.contains("must be strings"));
         assert!(run("file_exists()\n").unwrap_err().message.contains("expects one path"));
+    }
+
+    #[test]
+    fn path_utilities_inspect_join_and_list_real_paths() {
+        let root = std::env::temp_dir().join(format!("mosh-paths-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("nested")).unwrap();
+        std::fs::write(root.join("nested").join("b.txt"), "hello").unwrap();
+        std::fs::write(root.join("nested").join("a.txt"), "mosh!").unwrap();
+        let dir = root.join("nested").to_string_lossy().into_owned();
+        let source = format!(
+            "let dir = \"{}\"\nlet file = path_join(dir, \"a.txt\")\nlet entries = list_dir(dir)\nfile_size(file) + len(entries)\n",
+            dir
+        );
+        assert_eq!(run(&source).unwrap(), Value::Integer(7));
+        assert_eq!(run(&format!("is_file(\"{}\")\n", root.join("nested/a.txt").display())).unwrap(), Value::Boolean(true));
+        assert_eq!(run(&format!("is_dir(\"{}\")\n", root.join("nested").display())).unwrap(), Value::Boolean(true));
+        let listing = run(&format!("list_dir(\"{}\")\n", dir)).unwrap();
+        assert_eq!(listing, Value::List(Rc::new(RefCell::new(vec![Value::String("a.txt".into()), Value::String("b.txt".into())]))));
+        assert!(matches!(run("current_dir()\n").unwrap(), Value::String(_)));
+        assert!(matches!(run(&format!("absolute_path(\"{}\")\n", dir)).unwrap(), Value::String(_)));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn path_utilities_validate_arguments_and_report_file_errors() {
+        assert!(run("path_join()\n").unwrap_err().message.contains("at least one"));
+        assert!(run("path_join(\"a\", 1)\n").unwrap_err().message.contains("must be strings"));
+        assert!(run("file_size(\"/mosh-missing-file\")\n").unwrap_err().message.contains("file_size() failed"));
+        assert!(run("list_dir(\"/mosh-missing-dir\")\n").unwrap_err().message.contains("list_dir() failed"));
+        assert!(run("current_dir(\"extra\")\n").unwrap_err().message.contains("no arguments"));
     }
 
     #[test]
