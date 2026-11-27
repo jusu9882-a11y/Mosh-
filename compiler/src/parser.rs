@@ -798,6 +798,13 @@ mod tests {
     }
 
     #[test]
+    fn parses_try_catch_and_raise_blocks() {
+        let program = parsed("try:\n    raise \"failure\"\ncatch error:\n    print(error)\n").unwrap();
+        assert!(matches!(&program.statements[0], Stmt::Try { catch_name, body, catch_body, .. }
+            if catch_name == "error" && matches!(body[0], Stmt::Raise { .. }) && catch_body.len() == 1));
+    }
+
+    #[test]
     fn recovering_parser_reports_multiple_independent_errors_and_keeps_valid_statements() {
         let tokens = tokenize("let first = )\nlet valid = 2\nlet second = ]\nlet last = 4\n")
             .expect("source should tokenize");
