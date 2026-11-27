@@ -455,7 +455,12 @@ impl Interpreter {
         if !args.is_empty() {
             return Err(self.error(&format!("device.{module}.{method}() expects no arguments"), span));
         }
-        let name = format!("device.{module}");
+        let canonical_module = match module {
+            "ram" => "memory",
+            "power" => "battery",
+            _ => module,
+        };
+        let name = format!("device.{canonical_module}");
         let capability = self.device_registry.capability(&name);
         match method {
             "is_supported" => Ok(Value::Boolean(capability.supported)),
@@ -483,7 +488,7 @@ impl Interpreter {
                     .map_err(|error| self.error(&error.to_string(), span))?;
                 Ok(Value::String(permission_name(state).into()))
             }
-            "read" if module == "battery" => {
+            "read" if canonical_module == "battery" => {
                 let reading = self.device_registry.read_battery()
                     .map_err(|error| self.error(&error.to_string(), span))?;
                 let mut values = HashMap::new();
@@ -494,6 +499,27 @@ impl Interpreter {
                 values.insert("current_ma".into(), reading.current_ma.map(Value::Float).unwrap_or(Value::Nil));
                 values.insert("temperature_c".into(), reading.temperature_c.map(Value::Float).unwrap_or(Value::Nil));
                 values.insert("technology".into(), reading.technology.map(Value::String).unwrap_or(Value::Nil));
+                Ok(Value::Dict(Rc::new(RefCell::new(values))))
+            }
+            "read" if canonical_module == "memory" => {
+                let reading = self.device_registry.read_memory()
+                    .map_err(|error| self.error(&error.to_string(), span))?;
+                let mut values = HashMap::new();
+                values.insert("total_bytes".into(), Value::Integer(i64::try_from(reading.total_bytes).map_err(|_| self.error("total memory exceeds Mosh integer range", span))?));
+                values.insert("available_bytes".into(), Value::Integer(i64::try_from(reading.available_bytes).map_err(|_| self.error("available memory exceeds Mosh integer range", span))?));
+                values.insert("free_bytes".into(), Value::Integer(i64::try_from(reading.free_bytes).map_err(|_| self.error("free memory exceeds Mosh integer range", span))?));
+                values.insert("swap_total_bytes".into(), Value::Integer(i64::try_from(reading.swap_total_bytes).map_err(|_| self.error("swap memory exceeds Mosh integer range", span))?));
+                values.insert("swap_free_bytes".into(), Value::Integer(i64::try_from(reading.swap_free_bytes).map_err(|_| self.error("free swap memory exceeds Mosh integer range", span))?));
+                Ok(Value::Dict(Rc::new(RefCell::new(values))))
+            }
+            "read" if canonical_module == "cpu" => {
+                let reading = self.device_registry.read_cpu()
+                    .map_err(|error| self.error(&error.to_string(), span))?;
+                let mut values = HashMap::new();
+                values.insert("model".into(), Value::String(reading.model));
+                values.insert("architecture".into(), Value::String(reading.architecture));
+                values.insert("logical_cores".into(), Value::Integer(reading.logical_cores as i64));
+                values.insert("frequency_mhz".into(), reading.frequency_mhz.map(Value::Float).unwrap_or(Value::Nil));
                 Ok(Value::Dict(Rc::new(RefCell::new(values))))
             }
             "read" => Err(self.error(&format!("device.{module}.read() is not implemented by the active backend"), span)),
