@@ -658,6 +658,10 @@ impl Builder {
             Expr::Boolean { value, span } => {
                 self.emit(block, InstructionKind::Boolean(*value), *span, true)
             }
+            Expr::List { span, .. } => {
+                self.error("list literals are not supported by the current MIR backend", *span);
+                None
+            }
             Expr::Identifier { name, span } => self.emit(
                 block,
                 InstructionKind::Load { name: name.clone() },
