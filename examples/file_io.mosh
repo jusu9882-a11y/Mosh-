@@ -2,8 +2,8 @@
 @ Paths are relative to the current working directory.
 
 create_dir("mosh-data")
-write_text("mosh-data/notes.txt", "Mosh is running.\\n")
-append_text("mosh-data/notes.txt", "File I/O is real.\\n")
+write_text("mosh-data/notes.txt", "Mosh is running.\n")
+append_text("mosh-data/notes.txt", "File I/O is real.\n")
 
 if file_exists("mosh-data/notes.txt"):
     print(read_text("mosh-data/notes.txt"))
