@@ -529,7 +529,8 @@ impl Interpreter {
 fn stmt_span(stmt: &Stmt) -> Span {
     match stmt {
         Stmt::Function { span, .. } | Stmt::Let { span, .. } | Stmt::Return { span, .. }
-        | Stmt::Raise { span, .. } | Stmt::Try { span, .. }\n        | Stmt::If { span, .. } | Stmt::While { span, .. } | Stmt::For { span, .. }
+        | Stmt::Raise { span, .. } | Stmt::Try { span, .. }
+        | Stmt::If { span, .. } | Stmt::While { span, .. } | Stmt::For { span, .. }
         | Stmt::Assign { span, .. } | Stmt::Expression { span, .. } => *span,
     }
 }
