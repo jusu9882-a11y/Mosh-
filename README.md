@@ -100,6 +100,19 @@ let result = interpreter.execute(&program)?;
 
 A platform host should implement `DeviceBackend` using the relevant native APIs and inject it with `Interpreter::with_device_backend`. The default CLI backend is intended for Linux/Android procfs/sysfs telemetry; iOS and Windows require their own adapters.
 
+## C ABI embedding
+
+Mosh also builds a C-compatible shared library. The public header is 'compiler/include/mosh.h'; the runtime returns JSON result strings and all returned strings must be released with 'mosh_string_free()'. Each runtime handle is single-threaded and host calls must be serialized. JNI/Kotlin, Swift, and Windows-specific language bindings are not included yet.
+
+Build it with:
+
+~~~sh
+cd compiler
+cargo build --release --lib
+~~~
+
+See 'docs/HOST_INTEGRATION.md' for the ownership rules and ABI contract.
+
 ## CLI
 
 - `mosh` or `mosh repl` — start the interactive interpreter.
