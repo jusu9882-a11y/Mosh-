@@ -447,7 +447,11 @@ impl<'a> Parser<'a> {
         while !self.check(&TokenKind::Dedent) && !self.check(&TokenKind::Eof) {
             match self.statement() {
                 Ok(statement) => {
-                    body.push(statement);
+                    if matches!(statement, Stmt::Import { .. }) {
+                        self.errors.push(ParseError { message: "imports are only allowed at the top level".into(), span: stmt_syntax_span(&statement) });
+                    } else {
+                        body.push(statement);
+                    }
                     if let Err(error) = self.statement_end() {
                         self.errors.push(error);
                         self.synchronize_statement();
@@ -778,14 +782,14 @@ fn precedence(kind: &TokenKind) -> Option<(u8, bool)> {
 fn decode_import_path(raw: &str) -> Option<String> {
     let quote = raw.chars().next()?;
     let inner = raw.strip_prefix(quote)?.strip_suffix(quote)?;
-    let mut result = String::new();
-    let mut chars = inner.chars();
-    while let Some(ch) = chars.next() {
-        if ch == '\\\\' {
-            match chars.next()? { 'n' => result.push('\\n'), 'r' => result.push('\\r'), 't' => result.push('\\t'), '\\\\' => result.push('\\\\'), '\\'' => result.push('\\''), '"' => result.push('"'), other => { result.push('\\\\'); result.push(other); } }
-        } else { result.push(ch); }
+    if inner.is_empty() || inner.contains('\\\\') { return None; }
+    Some(inner.to_owned())
+}
+
+fn stmt_syntax_span(stmt: &Stmt) -> Span {
+    match stmt {
+        Stmt::Import { span, .. } | Stmt::Function { span, .. } | Stmt::Let { span, .. } | Stmt::Return { span, .. } | Stmt::Raise { span, .. } | Stmt::Try { span, .. } | Stmt::If { span, .. } | Stmt::While { span, .. } | Stmt::For { span, .. } | Stmt::Assign { span, .. } | Stmt::Expression { span, .. } => *span,
     }
-    if result.is_empty() { None } else { Some(result) }
 }
 
 fn expr_span(expr: &Expr) -> Span {
