@@ -1197,14 +1197,14 @@ mod tests {
     fn std_env_reads_environment_and_process_metadata() {
         let key = format!("MOSH_TEST_{}_VALUE", std::process::id());
         std::env::set_var(&key, "runtime-value");
-        let source = format!("std.env.get(\"{key}\")\\n");
+        let source = format!("std.env.get(\"{key}\")\n");
         assert_eq!(run(&source).unwrap(), Value::String("runtime-value".into()));
-        let missing = format!("std.env.get(\"{key}_MISSING\", \"fallback\")\\n");
+        let missing = format!("std.env.get(\"{key}_MISSING\", \"fallback\")\n");
         assert_eq!(run(&missing).unwrap(), Value::String("fallback".into()));
-        let has = format!("std.env.has(\"{key}\")\\n");
+        let has = format!("std.env.has(\"{key}\")\n");
         assert_eq!(run(&has).unwrap(), Value::Boolean(true));
-        assert!(matches!(run("std.env.args()\\n").unwrap(), Value::List(_)));
-        assert!(matches!(run("std.env.current_exe()\\n").unwrap(), Value::String(path) if !path.is_empty()));
+        assert!(matches!(run("std.env.args()\n").unwrap(), Value::List(_)));
+        assert!(matches!(run("std.env.current_exe()\n").unwrap(), Value::String(path) if !path.is_empty()));
         std::env::remove_var(key);
     }
 
