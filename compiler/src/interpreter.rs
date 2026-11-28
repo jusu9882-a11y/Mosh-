@@ -1215,15 +1215,15 @@ mod tests {
 
     #[test]
     fn std_paths_exposes_platform_path_operations() {
-        assert_eq!(run('std.paths.join("folder", "file.mosh")\n').unwrap(), Value::String(Path::new("folder").join("file.mosh").to_string_lossy().into_owned()));
-        assert_eq!(run('std.paths.file_name("folder/file.mosh")\n').unwrap(), Value::String("file.mosh".into()));
-        assert_eq!(run('std.paths.extension("folder/file.mosh")\n').unwrap(), Value::String("mosh".into()));
-        assert_eq!(run('std.paths.stem("folder/file.mosh")\n').unwrap(), Value::String("file".into()));
-        assert_eq!(run('std.paths.parent("folder/file.mosh")\n').unwrap(), Value::String("folder".into()));
-        assert_eq!(run('std.paths.is_absolute("relative/file")\n').unwrap(), Value::Boolean(false));
-        assert!(run('std.paths.is_file("Cargo.toml")\n').is_ok());
-        assert!(run('std.paths.join("a", "b", "c")\n').is_err());
-        assert!(run('std.paths.file_name(1)\n').is_err());
+        assert_eq!(run("std.paths.join(\"folder\", \"file.mosh\")\n").unwrap(), Value::String(Path::new("folder").join("file.mosh").to_string_lossy().into_owned()));
+        assert_eq!(run("std.paths.file_name(\"folder/file.mosh\")\n").unwrap(), Value::String("file.mosh".into()));
+        assert_eq!(run("std.paths.extension(\"folder/file.mosh\")\n").unwrap(), Value::String("mosh".into()));
+        assert_eq!(run("std.paths.stem(\"folder/file.mosh\")\n").unwrap(), Value::String("file".into()));
+        assert_eq!(run("std.paths.parent(\"folder/file.mosh\")\n").unwrap(), Value::String("folder".into()));
+        assert_eq!(run("std.paths.is_absolute(\"relative/file\")\n").unwrap(), Value::Boolean(false));
+        assert!(run("std.paths.is_file(\"Cargo.toml\")\n").is_ok());
+        assert!(run("std.paths.join(\"a\", \"b\", \"c\")\n").is_err());
+        assert!(run("std.paths.file_name(1)\n").is_err());
     }
 
     #[test]
