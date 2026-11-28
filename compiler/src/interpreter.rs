@@ -441,13 +441,14 @@ impl Interpreter {
             Expr::Member { object, name, span } => {
                 match self.eval(object)? {
                     Value::DeviceRoot => Ok(Value::DeviceModule(name.clone())),
-                    Value::StdRoot if name == "json" || name == "time" || name == "env" => Ok(Value::StdModule(name.clone())),
+                    Value::StdRoot if name == "json" || name == "time" || name == "env" || name == "paths" => Ok(Value::StdModule(name.clone())),
                     Value::StdRoot => Err(self.error(&format!("std has no module '{name}'"), *span)),
                     Value::StdModule(module) => {
                         let allowed: &[&str] = match module.as_str() {
                             "json" => &["encode", "decode", "stringify", "parse"],
                             "time" => &["now", "unix_seconds", "unix_millis", "sleep_ms"],
                             "env" => &["get", "has", "args", "current_exe"],
+                            "paths" => &["join", "file_name", "extension", "stem", "parent", "is_absolute", "is_file", "is_dir"],
                             _ => &[],
                         };
                         if allowed.contains(&name.as_str()) { Ok(Value::StdFunction(module, name.clone())) }
@@ -1081,6 +1082,25 @@ impl Interpreter {
                 std::env::current_exe().map(|path| Value::String(path.to_string_lossy().into_owned()))
                     .map_err(|error| self.error(&format!("cannot determine current executable: {error}"), span))
             }
+            ("paths", "join") => {
+                if args.len() != 2 { return Err(self.error("std.paths.join() expects exactly two path strings", span)); }
+                let (Value::String(left), Value::String(right)) = (&args[0], &args[1]) else { return Err(self.error("std.paths.join() arguments must be strings", span)); };
+                Ok(Value::String(Path::new(left).join(right).to_string_lossy().into_owned()))
+            }
+            ("paths", "file_name" | "extension" | "stem" | "parent" | "is_absolute" | "is_file" | "is_dir") => {
+                if args.len() != 1 { return Err(self.error(&format!("std.paths.{name}() expects exactly one path string"), span)); }
+                let Value::String(raw) = &args[0] else { return Err(self.error(&format!("std.paths.{name}() path must be a string"), span)); };
+                let path = Path::new(raw);
+                match name {
+                    "file_name" => Ok(path.file_name().map(|v| Value::String(v.to_string_lossy().into_owned())).unwrap_or(Value::Nil)),
+                    "extension" => Ok(path.extension().map(|v| Value::String(v.to_string_lossy().into_owned())).unwrap_or(Value::Nil)),
+                    "stem" => Ok(path.file_stem().map(|v| Value::String(v.to_string_lossy().into_owned())).unwrap_or(Value::Nil)),
+                    "parent" => Ok(path.parent().map(|v| Value::String(v.to_string_lossy().into_owned())).unwrap_or(Value::Nil)),
+                    "is_absolute" => Ok(Value::Boolean(path.is_absolute())),
+                    "is_file" => Ok(Value::Boolean(path.is_file())),
+                    _ => Ok(Value::Boolean(path.is_dir())),
+                }
+            }
             _ => Err(self.error(&format!("unknown standard function std.{module}.{name}"), span)),
         }
     }
@@ -1191,6 +1211,19 @@ mod tests {
     #[test]
     fn runtime_error_has_stable_machine_readable_code() {
         assert_eq!(run("1 / 0\n").unwrap_err().code, "MATH_DIVISION_BY_ZERO");
+    }
+
+    #[test]
+    fn std_paths_exposes_platform_path_operations() {
+        assert_eq!(run("std.paths.join(\"folder\", \"file.mosh\")\n").unwrap(), Value::String(Path::new("folder").join("file.mosh").to_string_lossy().into_owned()));
+        assert_eq!(run("std.paths.file_name(\"folder/file.mosh\")\n").unwrap(), Value::String("file.mosh".into()));
+        assert_eq!(run("std.paths.extension(\"folder/file.mosh\")\n").unwrap(), Value::String("mosh".into()));
+        assert_eq!(run("std.paths.stem(\"folder/file.mosh\")\n").unwrap(), Value::String("file".into()));
+        assert_eq!(run("std.paths.parent(\"folder/file.mosh\")\n").unwrap(), Value::String("folder".into()));
+        assert_eq!(run("std.paths.is_absolute(\"relative/file\")\n").unwrap(), Value::Boolean(false));
+        assert!(run("std.paths.is_file(\"Cargo.toml\")\n").is_ok());
+        assert!(run("std.paths.join(\"a\", \"b\", \"c\")\n").is_err());
+        assert!(run("std.paths.file_name(1)\n").is_err());
     }
 
     #[test]
