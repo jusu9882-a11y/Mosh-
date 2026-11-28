@@ -66,6 +66,16 @@ Start the REPL:
 cargo run --bin mosh
 ```
 
+## Standard path module
+
+The `std.paths` module provides platform-aware path operations using Rust's native path semantics:
+
+- `std.paths.join(left, right)` joins two path components.
+- `file_name(path)`, `extension(path)`, `stem(path)`, and `parent(path)` return path components or `nil` when absent.
+- `is_absolute(path)`, `is_file(path)`, and `is_dir(path)` inspect path form or the current filesystem.
+
+These operations do not create, delete, or modify files. Filesystem checks follow the permissions and visibility of the Mosh host process; they are not a sandbox.
+
 ## Standard environment module
 
 The read-only `std.env` module exposes process metadata without changing the host process environment:
