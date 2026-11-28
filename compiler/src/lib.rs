@@ -9,6 +9,7 @@ pub mod ffi;
 pub mod interpreter;
 pub mod jni_bridge;
 pub mod lexer;
+pub mod module_registry;
 pub mod parser;
 pub mod semantic;
 pub mod typecheck;
