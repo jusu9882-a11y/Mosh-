@@ -1183,7 +1183,7 @@ mod tests {
 
     #[test]
     fn decodes_string_escapes_and_concatenates() {
-        assert_eq!(run("let name = \"Mo\\nsh\"\\nname + \"!\"\\n").unwrap(), Value::String("Mo\nsh!".into()));
+        assert_eq!(run("let name = \"Mo\\nsh\"\nname + \"!\"\n").unwrap(), Value::String("Mo\nsh!".into()));
     }
 
     #[test]
