@@ -441,7 +441,7 @@ impl Interpreter {
             Expr::Member { object, name, span } => {
                 match self.eval(object)? {
                     Value::DeviceRoot => Ok(Value::DeviceModule(name.clone())),
-                    Value::StdRoot if name == "json" || name == "time" || name == "env" || name == "paths" => Ok(Value::StdModule(name.clone())),
+                    Value::StdRoot if name == "json" || name == "time" || name == "env" || name == "paths" || name == "files" => Ok(Value::StdModule(name.clone())),
                     Value::StdRoot => Err(self.error(&format!("std has no module '{name}'"), *span)),
                     Value::StdModule(module) => {
                         let allowed: &[&str] = match module.as_str() {
@@ -449,6 +449,7 @@ impl Interpreter {
                             "time" => &["now", "unix_seconds", "unix_millis", "sleep_ms"],
                             "env" => &["get", "has", "args", "current_exe"],
                             "paths" => &["join", "file_name", "extension", "stem", "parent", "is_absolute", "is_file", "is_dir"],
+                            "files" => &["read_text", "write_text", "append_text", "exists", "is_file", "is_dir", "file_size", "create_dir", "list_dir"],
                             _ => &[],
                         };
                         if allowed.contains(&name.as_str()) { Ok(Value::StdFunction(module, name.clone())) }
@@ -1101,6 +1102,44 @@ impl Interpreter {
                     _ => Ok(Value::Boolean(path.is_dir())),
                 }
             }
+            ("files", "read_text") => {
+                if args.len() != 1 { return Err(self.error("std.files.read_text() expects one path", span)); }
+                let Value::String(path) = &args[0] else { return Err(self.error("std.files.read_text() path must be a string", span)); };
+                fs::read_to_string(path).map(Value::String).map_err(|e| self.error(&format!("cannot read text file '{}': {e}", path), span))
+            }
+            ("files", "write_text" | "append_text") => {
+                if args.len() != 2 { return Err(self.error(&format!("std.files.{name}() expects a path and text"), span)); }
+                let (Value::String(path), Value::String(contents)) = (&args[0], &args[1]) else { return Err(self.error(&format!("std.files.{name}() arguments must both be strings"), span)); };
+                let result = if name == "write_text" { fs::write(path, contents) } else {
+                    use std::io::Write as _;
+                    fs::OpenOptions::new().create(true).append(true).open(path).and_then(|mut file| file.write_all(contents.as_bytes()))
+                };
+                result.map(|_| Value::Nil).map_err(|e| self.error(&format!("cannot {name} '{}': {e}", path), span))
+            }
+            ("files", "exists" | "is_file" | "is_dir") => {
+                if args.len() != 1 { return Err(self.error(&format!("std.files.{name}() expects one path"), span)); }
+                let Value::String(path) = &args[0] else { return Err(self.error(&format!("std.files.{name}() path must be a string"), span)); };
+                let path = Path::new(path);
+                Ok(Value::Boolean(match name { "exists" => path.exists(), "is_file" => path.is_file(), _ => path.is_dir() }))
+            }
+            ("files", "file_size") => {
+                if args.len() != 1 { return Err(self.error("std.files.file_size() expects one path", span)); }
+                let Value::String(path) = &args[0] else { return Err(self.error("std.files.file_size() path must be a string", span)); };
+                fs::metadata(path).map(|m| Value::Integer(m.len().min(i64::MAX as u64) as i64)).map_err(|e| self.error(&format!("cannot inspect file '{}': {e}", path), span))
+            }
+            ("files", "create_dir") => {
+                if args.len() != 1 { return Err(self.error("std.files.create_dir() expects one path", span)); }
+                let Value::String(path) = &args[0] else { return Err(self.error("std.files.create_dir() path must be a string", span)); };
+                fs::create_dir_all(path).map(|_| Value::Nil).map_err(|e| self.error(&format!("cannot create directory '{}': {e}", path), span))
+            }
+            ("files", "list_dir") => {
+                if args.len() != 1 { return Err(self.error("std.files.list_dir() expects one directory path", span)); }
+                let Value::String(path) = &args[0] else { return Err(self.error("std.files.list_dir() path must be a string", span)); };
+                let entries = fs::read_dir(path).map_err(|e| self.error(&format!("cannot list directory '{}': {e}", path), span))?;
+                let mut names = entries.map(|entry| entry.map(|e| e.file_name().to_string_lossy().into_owned()).map_err(|e| self.error(&format!("cannot read directory entry: {e}"), span))).collect::<Result<Vec<_>, _>>()?;
+                names.sort();
+                Ok(Value::List(Rc::new(RefCell::new(names.into_iter().map(Value::String).collect()))))
+            }
             _ => Err(self.error(&format!("unknown standard function std.{module}.{name}"), span)),
         }
     }
@@ -1211,6 +1250,33 @@ mod tests {
     #[test]
     fn runtime_error_has_stable_machine_readable_code() {
         assert_eq!(run("1 / 0\n").unwrap_err().code, "MATH_DIVISION_BY_ZERO");
+    }
+
+    #[test]
+    fn std_files_reads_writes_appends_and_lists_real_files() {
+        let root = std::env::temp_dir().join(format!("mosh-std-files-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let dir = root.join("nested");
+        let file = dir.join("sample.txt");
+        let dir_s = dir.to_string_lossy();
+        let file_s = file.to_string_lossy();
+        let setup = format!("std.files.create_dir(\"{}\")\n", dir_s);
+        assert_eq!(run(&setup).unwrap(), Value::Nil);
+        let write = format!("std.files.write_text(\"{}\", \"hello\")\n", file_s);
+        assert_eq!(run(&write).unwrap(), Value::Nil);
+        let append = format!("std.files.append_text(\"{}\", \" world\")\n", file_s);
+        run(&append).unwrap();
+        let read = format!("std.files.read_text(\"{}\")\n", file_s);
+        assert_eq!(run(&read).unwrap(), Value::String("hello world".into()));
+        let size = format!("std.files.file_size(\"{}\")\n", file_s);
+        assert_eq!(run(&size).unwrap(), Value::Integer(11));
+        let exists = format!("std.files.exists(\"{}\")\n", file_s);
+        assert_eq!(run(&exists).unwrap(), Value::Boolean(true));
+        let list = format!("std.files.list_dir(\"{}\")\n", dir_s);
+        assert_eq!(run(&list).unwrap(), Value::List(Rc::new(RefCell::new(vec![Value::String("sample.txt".into())]))));
+        assert!(run("std.files.read_text(1)\n").is_err());
+        assert!(run("std.files.write_text(\"x\", 1)\n").is_err());
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
