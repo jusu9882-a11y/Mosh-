@@ -1455,7 +1455,7 @@ len(mounts) + len(alias_mounts)
         assert!(implemented.borrow().contains(&Value::String("device".into())));
         assert!(!implemented.borrow().contains(&Value::String("ai".into())));
 
-        let info = run(r#"module_info("web")\n"#).unwrap();
+        let info = run("module_info(\"web\")\n").unwrap();
         let Value::Dict(info) = info else { panic!("expected module info dictionary"); };
         assert_eq!(info.borrow().get("implemented"), Some(&Value::Boolean(false)));
         assert_eq!(info.borrow().get("namespace"), Some(&Value::String("web".into())));
@@ -1466,7 +1466,7 @@ len(mounts) + len(alias_mounts)
         assert!(run("modules(1)\n").unwrap_err().message.contains("expects no arguments"));
         assert!(run("module_info()\n").unwrap_err().message.contains("exactly one"));
         assert!(run("module_info(1)\n").unwrap_err().message.contains("must be a string"));
-        assert!(run(r#"module_info("missing")\n"#).unwrap_err().message.contains("unknown module namespace"));
+        assert!(run("module_info(\"missing\")\n").unwrap_err().message.contains("unknown module namespace"));
     }
 
     #[test]
