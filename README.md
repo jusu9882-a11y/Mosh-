@@ -66,6 +66,20 @@ Start the REPL:
 cargo run --bin mosh
 ```
 
+## Standard file module
+
+The `std.files` module exposes real filesystem operations:
+
+- `read_text(path)` reads UTF-8 text.
+- `write_text(path, text)` creates or replaces a file.
+- `append_text(path, text)` appends UTF-8 text, creating the file when needed.
+- `exists(path)`, `is_file(path)`, and `is_dir(path)` inspect filesystem entries.
+- `file_size(path)` returns the file size in bytes.
+- `create_dir(path)` creates a directory and missing parents.
+- `list_dir(path)` returns sorted entry names.
+
+These are actual host filesystem operations. They are not sandboxed, and they use the Mosh process's operating-system permissions. Validate paths and only execute trusted programs; this module does not impose an application-specific access boundary.
+
 ## Standard path module
 
 The `std.paths` module provides platform-aware path operations using Rust's native path semantics:
