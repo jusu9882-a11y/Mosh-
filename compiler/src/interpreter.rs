@@ -1,6 +1,7 @@
 use crate::device::{DeviceRegistry, PermissionState};
 use crate::lexer::{Span, TokenKind};
 use crate::parser::{Expr, Program, Stmt};
+use crate::module_registry::ModuleRegistry;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::fmt;
@@ -125,6 +126,7 @@ pub struct Interpreter {
     module_cache: Rc<RefCell<HashMap<PathBuf, Rc<RefCell<Interpreter>>>>>,
     import_stack: Rc<RefCell<Vec<PathBuf>>>,
     device_registry: DeviceRegistry,
+    module_registry: ModuleRegistry,
 }
 
 impl Interpreter {
@@ -137,6 +139,7 @@ impl Interpreter {
             module_cache: Rc::new(RefCell::new(HashMap::new())),
             import_stack: Rc::new(RefCell::new(Vec::new())),
             device_registry: DeviceRegistry::system_default(),
+            module_registry: ModuleRegistry::new(),
         }
     }
 
@@ -146,8 +149,8 @@ impl Interpreter {
         interpreter
     }
 
-    fn with_module_state(cache: Rc<RefCell<HashMap<PathBuf, Rc<RefCell<Interpreter>>>>>, stack: Rc<RefCell<Vec<PathBuf>>>, source_path: PathBuf, device_registry: DeviceRegistry) -> Self {
-        Self { scopes: vec![HashMap::new()], functions: HashMap::new(), output: false, source_path: Some(source_path), module_cache: cache, import_stack: stack, device_registry }
+    fn with_module_state(cache: Rc<RefCell<HashMap<PathBuf, Rc<RefCell<Interpreter>>>>>, stack: Rc<RefCell<Vec<PathBuf>>>, source_path: PathBuf, device_registry: DeviceRegistry, module_registry: ModuleRegistry) -> Self {
+        Self { scopes: vec![HashMap::new()], functions: HashMap::new(), output: false, source_path: Some(source_path), module_cache: cache, import_stack: stack, device_registry, module_registry }
     }
 
     pub fn set_source_path(&mut self, path: impl AsRef<Path>) {
@@ -202,7 +205,7 @@ impl Interpreter {
             &format!("{}: {error}", canonical.display()), span))?;
         self.import_stack.borrow_mut().push(canonical.clone());
         let module = Rc::new(RefCell::new(Interpreter::with_module_state(
-            self.module_cache.clone(), self.import_stack.clone(), canonical.clone(), self.device_registry.clone())));
+            self.module_cache.clone(), self.import_stack.clone(), canonical.clone(), self.device_registry.clone(), self.module_registry.clone())));
         let execution = module.borrow_mut().execute(&program);
         self.import_stack.borrow_mut().pop();
         execution.map_err(|error| self.error(
@@ -550,6 +553,31 @@ impl Interpreter {
 
     fn call(&mut self, name: &str, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
         match name {
+            "modules" => {
+                if !args.is_empty() { return Err(self.error("modules() expects no arguments", span)); }
+                let names = self.module_registry.namespaces().map(|name| Value::String(name.to_owned())).collect();
+                Ok(Value::List(Rc::new(RefCell::new(names))))
+            }
+            "implemented_modules" => {
+                if !args.is_empty() { return Err(self.error("implemented_modules() expects no arguments", span)); }
+                let names = self.module_registry.implemented_namespaces().map(|name| Value::String(name.to_owned())).collect();
+                Ok(Value::List(Rc::new(RefCell::new(names))))
+            }
+            "module_info" => {
+                if args.len() != 1 { return Err(self.error("module_info() expects exactly one namespace string", span)); }
+                let Value::String(namespace) = &args[0] else { return Err(self.error("module_info() namespace must be a string", span)); };
+                let Some(descriptor) = self.module_registry.get(namespace) else {
+                    return Err(self.error(&format!("unknown module namespace '{namespace}'"), span));
+                };
+                let mut info = HashMap::new();
+                info.insert("namespace".into(), Value::String(descriptor.namespace.into()));
+                info.insert("implemented".into(), Value::Boolean(descriptor.implemented));
+                info.insert("description".into(), Value::String(descriptor.description.into()));
+                info.insert("modules".into(), Value::List(Rc::new(RefCell::new(
+                    descriptor.modules.iter().map(|name| Value::String((*name).into())).collect()
+                ))));
+                Ok(Value::Dict(Rc::new(RefCell::new(info))))
+            }
             "type" => {
                 if args.len() != 1 { return Err(self.error("type() expects exactly one argument", span)); }
                 let kind = match &args[0] {
@@ -1412,6 +1440,33 @@ len(mounts) + len(alias_mounts)
         let program = parse(&tokenize(source).unwrap()).unwrap();
         assert_eq!(interpreter.execute(&program).unwrap(), Value::Integer(4));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn module_registry_lists_namespaces_and_reports_implementation_status() {
+        let all = run("modules()\n").unwrap();
+        let Value::List(all) = all else { panic!("expected namespace list"); };
+        assert!(all.borrow().contains(&Value::String("ai".into())));
+        assert!(all.borrow().contains(&Value::String("device".into())));
+
+        let implemented = run("implemented_modules()\n").unwrap();
+        let Value::List(implemented) = implemented else { panic!("expected implemented namespace list"); };
+        assert!(implemented.borrow().contains(&Value::String("std".into())));
+        assert!(implemented.borrow().contains(&Value::String("device".into())));
+        assert!(!implemented.borrow().contains(&Value::String("ai".into())));
+
+        let info = run("module_info(\"web\")\n").unwrap();
+        let Value::Dict(info) = info else { panic!("expected module info dictionary"); };
+        assert_eq!(info.borrow().get("implemented"), Some(&Value::Boolean(false)));
+        assert_eq!(info.borrow().get("namespace"), Some(&Value::String("web".into())));
+    }
+
+    #[test]
+    fn module_registry_validates_arguments_and_unknown_namespaces() {
+        assert!(run("modules(1)\n").unwrap_err().message.contains("expects no arguments"));
+        assert!(run("module_info()\n").unwrap_err().message.contains("exactly one"));
+        assert!(run("module_info(1)\n").unwrap_err().message.contains("must be a string"));
+        assert!(run("module_info(\"missing\")\n").unwrap_err().message.contains("unknown module namespace"));
     }
 
     #[test]
