@@ -1183,7 +1183,7 @@ mod tests {
 
     #[test]
     fn decodes_string_escapes_and_concatenates() {
-        assert_eq!(run("let name = \"Mo\\nsh\"\nname + \"!\"\n").unwrap(), Value::String("Mo\nsh!".into()));
+        assert_eq!(run("let name = \"Mo\nsh\"\nname + \"!\"\n").unwrap(), Value::String("Mo\nsh!".into()));
     }
 
     #[test]
@@ -1444,18 +1444,18 @@ len(mounts) + len(alias_mounts)
 
     #[test]
     fn module_registry_lists_namespaces_and_reports_implementation_status() {
-        let all = run("modules()\\n").unwrap();
+        let all = run("modules()\n").unwrap();
         let Value::List(all) = all else { panic!("expected namespace list"); };
         assert!(all.borrow().contains(&Value::String("ai".into())));
         assert!(all.borrow().contains(&Value::String("device".into())));
 
-        let implemented = run("implemented_modules()\\n").unwrap();
+        let implemented = run("implemented_modules()\n").unwrap();
         let Value::List(implemented) = implemented else { panic!("expected implemented namespace list"); };
         assert!(implemented.borrow().contains(&Value::String("std".into())));
         assert!(implemented.borrow().contains(&Value::String("device".into())));
         assert!(!implemented.borrow().contains(&Value::String("ai".into())));
 
-        let info = run("module_info(\\"web\\")\\n").unwrap();
+        let info = run("module_info(\"web\")\n").unwrap();
         let Value::Dict(info) = info else { panic!("expected module info dictionary"); };
         assert_eq!(info.borrow().get("implemented"), Some(&Value::Boolean(false)));
         assert_eq!(info.borrow().get("namespace"), Some(&Value::String("web".into())));
@@ -1463,10 +1463,10 @@ len(mounts) + len(alias_mounts)
 
     #[test]
     fn module_registry_validates_arguments_and_unknown_namespaces() {
-        assert!(run("modules(1)\\n").unwrap_err().message.contains("expects no arguments"));
-        assert!(run("module_info()\\n").unwrap_err().message.contains("exactly one"));
-        assert!(run("module_info(1)\\n").unwrap_err().message.contains("must be a string"));
-        assert!(run("module_info(\\"missing\\")\\n").unwrap_err().message.contains("unknown module namespace"));
+        assert!(run("modules(1)\n").unwrap_err().message.contains("expects no arguments"));
+        assert!(run("module_info()\n").unwrap_err().message.contains("exactly one"));
+        assert!(run("module_info(1)\n").unwrap_err().message.contains("must be a string"));
+        assert!(run("module_info(\"missing\")\n").unwrap_err().message.contains("unknown module namespace"));
     }
 
     #[test]
