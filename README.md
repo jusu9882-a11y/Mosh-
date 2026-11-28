@@ -66,6 +66,17 @@ Start the REPL:
 cargo run --bin mosh
 ```
 
+## Standard environment module
+
+The read-only `std.env` module exposes process metadata without changing the host process environment:
+
+- `std.env.get(name)` returns a string or `nil`; `std.env.get(name, default)` returns the supplied default when missing.
+- `std.env.has(name)` checks whether a variable exists, including non-Unicode values.
+- `std.env.args()` returns command-line arguments after the executable name.
+- `std.env.current_exe()` returns the running interpreter executable path.
+
+Environment values and command-line arguments are host-provided data. The module does not mutate environment variables or launch subprocesses.
+
 ## Device namespace
 
 Mosh exposes a capability-first `device` namespace. For example:
