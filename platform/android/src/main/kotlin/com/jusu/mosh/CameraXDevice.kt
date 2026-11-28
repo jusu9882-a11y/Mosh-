@@ -47,6 +47,8 @@ class CameraXDevice(
         val height: Int,
         val rotationDegrees: Int,
         val timestampNanos: Long,
+        val rowStride: Int,
+        val pixelStride: Int,
         val luma: ByteArray
     )
 
@@ -64,6 +66,7 @@ class CameraXDevice(
     @Volatile private var analysis: ImageAnalysis? = null
     @Volatile private var selectedLens: Lens = Lens.BACK
     @Volatile private var targetSize: Size = Size(1280, 720)
+    @Volatile private var requested: Boolean = false
 
     init {
         lifecycleOwner.lifecycle.addObserver(this)
@@ -83,6 +86,7 @@ class CameraXDevice(
         check(!closed.get()) { "Camera session is closed" }
         selectedLens = lens
         targetSize = resolution
+        requested = true
         if (!isSupported()) {
             onError(UnsupportedOperationException("This device has no camera feature"))
             return
@@ -117,7 +121,7 @@ class CameraXDevice(
                     Lens.BACK -> CameraSelector.DEFAULT_BACK_CAMERA
                     Lens.FRONT -> CameraSelector.DEFAULT_FRONT_CAMERA
                 }
-                cameraProvider.unbind(preview, analysis)
+                unbindOwnedUseCases(cameraProvider)
                 cameraProvider.bindToLifecycle(lifecycleOwner, selector, previewUseCase, analysisUseCase)
                 preview = previewUseCase
                 analysis = analysisUseCase
@@ -139,6 +143,8 @@ class CameraXDevice(
                     height = image.height,
                     rotationDegrees = image.imageInfo.rotationDegrees,
                     timestampNanos = image.imageInfo.timestamp,
+                    rowStride = plane.rowStride,
+                    pixelStride = plane.pixelStride,
                     luma = luma
                 )
             )
@@ -156,20 +162,27 @@ class CameraXDevice(
         return bytes
     }
 
-    /** Stops camera use cases but keeps this object reusable until close(). */
-    fun stop() {
-        val cameraProvider = provider ?: return
-        cameraProvider.unbind(preview, analysis)
+    private fun unbindOwnedUseCases(cameraProvider: ProcessCameraProvider) {
+        val owned = listOfNotNull(preview, analysis)
+        if (owned.isNotEmpty()) cameraProvider.unbind(*owned.toTypedArray())
         preview = null
         analysis = null
     }
 
+    /** Stops camera use cases and prevents automatic restart until open() is called again. */
+    fun stop() {
+        requested = false
+        val cameraProvider = provider ?: return
+        mainExecutor.execute { unbindOwnedUseCases(cameraProvider) }
+    }
+
     override fun onStop(owner: LifecycleOwner) {
-        stop()
+        val cameraProvider = provider ?: return
+        mainExecutor.execute { unbindOwnedUseCases(cameraProvider) }
     }
 
     override fun onStart(owner: LifecycleOwner) {
-        if (!closed.get() && hasPermission() && provider == null) bindCamera()
+        if (!closed.get() && requested && hasPermission() && preview == null) bindCamera()
     }
 
     override fun onDestroy(owner: LifecycleOwner) {
@@ -182,9 +195,7 @@ class CameraXDevice(
         val cameraProvider = provider
         if (cameraProvider != null) {
             mainExecutor.execute {
-                cameraProvider.unbind(preview, analysis)
-                preview = null
-                analysis = null
+                unbindOwnedUseCases(cameraProvider)
                 provider = null
             }
         }
