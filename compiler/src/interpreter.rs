@@ -24,6 +24,9 @@ pub enum Value {
     DeviceRoot,
     DeviceModule(String),
     DeviceFunction(String, String),
+    StdRoot,
+    StdModule(String),
+    StdFunction(String, String),
     Nil,
 }
 
@@ -42,6 +45,9 @@ impl PartialEq for Value {
             (Self::DeviceRoot, Self::DeviceRoot) => true,
             (Self::DeviceModule(a), Self::DeviceModule(b)) => a == b,
             (Self::DeviceFunction(am, an), Self::DeviceFunction(bm, bn)) => am == bm && an == bn,
+            (Self::StdRoot, Self::StdRoot) => true,
+            (Self::StdModule(a), Self::StdModule(b)) => a == b,
+            (Self::StdFunction(am, an), Self::StdFunction(bm, bn)) => am == bm && an == bn,
             (Self::Nil, Self::Nil) => true,
             _ => false,
         }
@@ -82,6 +88,9 @@ impl fmt::Display for Value {
             Self::DeviceRoot => write!(f, "<device namespace>"),
             Self::DeviceModule(name) => write!(f, "<device module {name}>"),
             Self::DeviceFunction(module, name) => write!(f, "<device function {module}.{name}>"),
+            Self::StdRoot => write!(f, "<std namespace>"),
+            Self::StdModule(name) => write!(f, "<std module {name}>"),
+            Self::StdFunction(module, name) => write!(f, "<std function {module}.{name}>"),
             Self::Nil => write!(f, "nil"),
         }
     }
@@ -90,12 +99,13 @@ impl fmt::Display for Value {
 #[derive(Debug, Clone)]
 pub struct RuntimeError {
     pub message: String,
+    pub code: String,
     pub span: Span,
 }
 
 impl fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} at {}:{}", self.message, self.span.line, self.span.column)
+        write!(f, "[{}] {} at {}:{}", self.code, self.message, self.span.line, self.span.column)
     }
 }
 impl std::error::Error for RuntimeError {}
@@ -388,7 +398,7 @@ impl Interpreter {
                 for scope in self.scopes.iter().rev() {
                     if let Some(binding) = scope.get(name) { return Ok(binding.value.clone()); }
                 }
-                if name == "device" { Ok(Value::DeviceRoot) } else { Err(self.error(&format!("undefined variable '{name}'"), *span)) }
+                if name == "device" { Ok(Value::DeviceRoot) } else if name == "std" { Ok(Value::StdRoot) } else { Err(self.error(&format!("undefined variable '{name}'"), *span)) }
             }
             Expr::Unary { operator, operand, span } => {
                 let value = self.eval(operand)?;
@@ -413,6 +423,7 @@ impl Interpreter {
                     _ => match self.eval(callee)? {
                         Value::FunctionRef(module, name) => module.borrow_mut().call(&name, args, *span),
                         Value::DeviceFunction(module, name) => self.call_device(&module, &name, args, *span),
+                        Value::StdFunction(module, name) => self.call_std(&module, &name, args, *span),
                         _ => Err(self.error("expression is not callable", *span)),
                     }
                 }
@@ -430,6 +441,17 @@ impl Interpreter {
             Expr::Member { object, name, span } => {
                 match self.eval(object)? {
                     Value::DeviceRoot => Ok(Value::DeviceModule(name.clone())),
+                    Value::StdRoot if name == "json" || name == "time" => Ok(Value::StdModule(name.clone())),
+                    Value::StdRoot => Err(self.error(&format!("std has no module '{name}'"), *span)),
+                    Value::StdModule(module) => {
+                        let allowed: &[&str] = match module.as_str() {
+                            "json" => &["encode", "decode", "stringify", "parse"],
+                            "time" => &["now", "unix_seconds", "unix_millis", "sleep_ms"],
+                            _ => &[],
+                        };
+                        if allowed.contains(&name.as_str()) { Ok(Value::StdFunction(module, name.clone())) }
+                        else { Err(self.error(&format!("std.{module} has no function '{name}'"), *span)) }
+                    },
                     Value::DeviceModule(module) => {
                         const METHODS: &[&str] = &["is_supported", "is_available", "capabilities", "status", "permission", "request_permission", "read", "volumes"];
                         if METHODS.contains(&name.as_str()) {
@@ -586,7 +608,7 @@ impl Interpreter {
                     Value::List(_) => "list", Value::Dict(_) => "dict",
                     Value::Tuple(_) => "tuple", Value::Module(_) => "module",
                     Value::FunctionRef(_, _) => "function", Value::DeviceRoot => "device_namespace",
-                    Value::DeviceModule(_) => "device_module", Value::DeviceFunction(_, _) => "function", Value::Nil => "nil",
+                    Value::DeviceModule(_) => "device_module", Value::DeviceFunction(_, _) => "function", Value::StdRoot => "module_namespace", Value::StdModule(_) => "module", Value::StdFunction(_, _) => "function", Value::Nil => "nil",
                 };
                 Ok(Value::String(kind.to_owned()))
             }
@@ -995,8 +1017,84 @@ impl Interpreter {
     }
 
     fn error(&self, message: &str, span: Span) -> RuntimeError {
-        RuntimeError { message: message.to_owned(), span }
+        let lower = message.to_ascii_lowercase();
+        let code = if lower.contains("division by zero") { "MATH_DIVISION_BY_ZERO" }
+            else if lower.contains("overflow") { "MATH_OVERFLOW" }
+            else if lower.contains("json") || lower.contains("serialize") || lower.contains("deserialize") { "JSON_ERROR" }
+            else if lower.contains("permission") { "PERMISSION_DENIED" }
+            else if lower.contains("undefined") || lower.contains("no key") { "NAME_NOT_FOUND" }
+            else if lower.contains("expects") || lower.contains("must be") || lower.contains("invalid") { "INVALID_ARGUMENT" }
+            else if lower.contains("failed") || lower.contains("error") { "RUNTIME_OPERATION_FAILED" }
+            else { "RUNTIME_ERROR" };
+        RuntimeError { message: message.to_owned(), code: code.to_owned(), span }
     }
+
+    fn call_std(&self, module: &str, name: &str, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+        match (module, name) {
+            ("json", "encode" | "stringify") => {
+                if args.len() != 1 { return Err(self.error("std.json.encode() expects exactly one value", span)); }
+                let json = value_to_json(&args[0], 0).map_err(|e| self.error(&format!("JSON encode error: {e}"), span))?;
+                serde_json::to_string(&json).map(Value::String).map_err(|e| self.error(&format!("JSON encode error: {e}"), span))
+            }
+            ("json", "decode" | "parse") => {
+                if args.len() != 1 { return Err(self.error("std.json.decode() expects exactly one JSON string", span)); }
+                let Value::String(source) = &args[0] else { return Err(self.error("std.json.decode() input must be a string", span)); };
+                let json: serde_json::Value = serde_json::from_str(source).map_err(|e| self.error(&format!("JSON decode error: {e}"), span))?;
+                json_to_value(json).map_err(|e| self.error(&format!("JSON decode error: {e}"), span))
+            }
+            ("time", "now" | "unix_seconds" | "unix_millis") => {
+                if !args.is_empty() { return Err(self.error(&format!("std.time.{name}() expects no arguments"), span)); }
+                let duration = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| self.error(&format!("system clock error: {e}"), span))?;
+                match name {
+                    "now" => Ok(Value::String(format_utc(duration.as_secs() as i64))),
+                    "unix_seconds" => Ok(Value::Integer(duration.as_secs() as i64)),
+                    _ => i64::try_from(duration.as_millis()).map(Value::Integer).map_err(|_| self.error("system timestamp exceeds integer range", span)),
+                }
+            }
+            ("time", "sleep_ms") => {
+                if args.len() != 1 { return Err(self.error("std.time.sleep_ms() expects one integer duration", span)); }
+                let Value::Integer(ms) = args[0] else { return Err(self.error("std.time.sleep_ms() duration must be an integer", span)); };
+                if !(0..=60_000).contains(&ms) { return Err(self.error("std.time.sleep_ms() duration must be between 0 and 60000", span)); }
+                std::thread::sleep(std::time::Duration::from_millis(ms as u64)); Ok(Value::Nil)
+            }
+            _ => Err(self.error(&format!("unknown standard function std.{module}.{name}"), span)),
+        }
+    }
+}
+
+
+fn value_to_json(value: &Value, depth: usize) -> Result<serde_json::Value, String> {
+    use serde_json::Value as J;
+    if depth > 128 { return Err("maximum nesting depth (128) exceeded".into()); }
+    Ok(match value {
+        Value::Nil => J::Null, Value::Boolean(v) => J::Bool(*v), Value::Integer(v) => J::Number((*v).into()),
+        Value::Float(v) if v.is_finite() => J::Number(serde_json::Number::from_f64(*v).ok_or("non-finite number")?),
+        Value::Float(_) => return Err("non-finite floats are not valid JSON".into()),
+        Value::String(v) => J::String(v.clone()),
+        Value::List(v) => J::Array(v.borrow().iter().map(|x| value_to_json(x, depth+1)).collect::<Result<_,_>>()?),
+        Value::Tuple(v) => J::Array(v.iter().map(|x| value_to_json(x, depth+1)).collect::<Result<_,_>>()?),
+        Value::Dict(v) => J::Object(v.borrow().iter().map(|(k,x)| Ok((k.clone(),value_to_json(x,depth+1)?))).collect::<Result<_,String>>()?),
+        _ => return Err("runtime objects and functions cannot be encoded as JSON".into()),
+    })
+}
+fn json_to_value(value: serde_json::Value) -> Result<Value,String> {
+    use serde_json::Value as J;
+    Ok(match value {
+        J::Null => Value::Nil, J::Bool(v) => Value::Boolean(v),
+        J::Number(v) => if let Some(i)=v.as_i64(){Value::Integer(i)}else{Value::Float(v.as_f64().ok_or("number out of range")?)},
+        J::String(v)=>Value::String(v),
+        J::Array(v)=>Value::List(Rc::new(RefCell::new(v.into_iter().map(json_to_value).collect::<Result<_,_>>()?))),
+        J::Object(v)=>Value::Dict(Rc::new(RefCell::new(v.into_iter().map(|(k,x)|Ok((k,json_to_value(x)?))).collect::<Result<_,String>>()?))),
+    })
+}
+fn format_utc(timestamp:i64)->String {
+    let days=timestamp.div_euclid(86400); let sec=timestamp.rem_euclid(86400); let z=days+719468;
+    let era=if z>=0{z}else{z-146096}/146097; let doe=z-era*146097;
+    let yoe=(doe-doe/1460+doe/36524-doe/146096)/365; let mut year=yoe+era*400;
+    let doy=doe-(365*yoe+yoe/4-yoe/100); let mp=(5*doy+2)/153;
+    let day=doy-(153*mp+2)/5+1; let month=mp+if mp<10{3}else{-9};
+    year+=if month<=2{1}else{0};
+    format!("{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",sec/3600,(sec%3600)/60,sec%60)
 }
 
 fn stmt_span(stmt: &Stmt) -> Span {
@@ -1050,6 +1148,25 @@ mod tests {
         let mut vm = Interpreter::new();
         vm.output = false;
         vm.execute(&program)
+    }
+
+
+    #[test]
+    fn std_json_round_trips_nested_values_and_rejects_invalid_input() {
+        assert_eq!(run("let x = std.json.decode(\"{\\\"name\\\":\\\"Mosh\\\",\\\"items\\\":[1,true,null]}\")\nx[\"items\"][1]\n").unwrap(), Value::Boolean(true));
+        assert_eq!(run("std.json.encode({\"z\": 2, \"a\": [true, \"ok\"]})\n").unwrap(), Value::String("{\"a\":[true,\"ok\"],\"z\":2}".into()));
+        assert_eq!(run("std.json.decode(\"{bad}\")\n").unwrap_err().code, "JSON_ERROR");
+    }
+    #[test]
+    fn std_time_exposes_utc_and_epoch_clock() {
+        assert!(matches!(run("std.time.now()\n").unwrap(), Value::String(v) if v.ends_with('Z')));
+        assert!(matches!(run("std.time.unix_seconds()\n").unwrap(), Value::Integer(v) if v>0));
+        assert_eq!(format_utc(0), "1970-01-01T00:00:00Z");
+        assert_eq!(run("std.time.sleep_ms(0)\n").unwrap(), Value::Nil);
+    }
+    #[test]
+    fn runtime_error_has_stable_machine_readable_code() {
+        assert_eq!(run("1 / 0\n").unwrap_err().code, "MATH_DIVISION_BY_ZERO");
     }
 
     #[test]
