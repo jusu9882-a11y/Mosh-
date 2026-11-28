@@ -261,7 +261,7 @@ impl Interpreter {
                 };
                 let scope = self.scopes.last_mut().expect("interpreter always has a scope");
                 if scope.contains_key(name) {
-                    return Err(RuntimeError { message: format!("'{name}' is already declared in this scope"), span: *span });
+                    return Err(RuntimeError { message: format!("'{name}' is already declared in this scope"), code: "NAME_ALREADY_DECLARED".into(), span: *span });
                 }
                 scope.insert(name.clone(), Binding { value, mutable: *mutable });
                 Ok(Flow::Continue)
@@ -273,7 +273,7 @@ impl Interpreter {
                         for scope in self.scopes.iter_mut().rev() {
                             if let Some(binding) = scope.get_mut(name) {
                                 if !binding.mutable {
-                                    return Err(RuntimeError { message: format!("cannot assign to immutable variable '{name}'; declare it with 'mut'"), span: *span });
+                                    return Err(RuntimeError { message: format!("cannot assign to immutable variable '{name}'; declare it with 'mut'"), code: "IMMUTABLE_ASSIGNMENT".into(), span: *span });
                                 }
                                 binding.value = next;
                                 return Ok(Flow::Continue);
@@ -1000,7 +1000,7 @@ impl Interpreter {
             Value::List(v) => !v.borrow().is_empty(),
             Value::Dict(v) => !v.borrow().is_empty(),
             Value::Tuple(v) => !v.is_empty(),
-            Value::Module(_) | Value::FunctionRef(_, _) | Value::DeviceRoot | Value::DeviceModule(_) | Value::DeviceFunction(_, _) => true,
+            Value::Module(_) | Value::FunctionRef(_, _) | Value::DeviceRoot | Value::DeviceModule(_) | Value::DeviceFunction(_, _) | Value::StdRoot | Value::StdModule(_) | Value::StdFunction(_, _) => true,
             Value::Nil => false,
         }
     }
