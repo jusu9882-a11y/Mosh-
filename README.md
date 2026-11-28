@@ -141,6 +141,10 @@ for number in [1, 2, 3, 4]:
 print(total)
 ```
 
+## Ecosystem architecture
+
+Mosh's planned general-purpose runtime architecture and staged roadmap are documented in [docs/ECOSYSTEM_ARCHITECTURE.md](docs/ECOSYSTEM_ARCHITECTURE.md). The document separates implemented capabilities from future namespaces and defines the module, host-adapter, permission, resource-lifecycle, and security contracts.
+
 ## Development principles
 
 1. The interpreter is the product; keep it usable as features grow.
