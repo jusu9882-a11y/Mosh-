@@ -441,12 +441,13 @@ impl Interpreter {
             Expr::Member { object, name, span } => {
                 match self.eval(object)? {
                     Value::DeviceRoot => Ok(Value::DeviceModule(name.clone())),
-                    Value::StdRoot if name == "json" || name == "time" => Ok(Value::StdModule(name.clone())),
+                    Value::StdRoot if name == "json" || name == "time" || name == "env" => Ok(Value::StdModule(name.clone())),
                     Value::StdRoot => Err(self.error(&format!("std has no module '{name}'"), *span)),
                     Value::StdModule(module) => {
                         let allowed: &[&str] = match module.as_str() {
                             "json" => &["encode", "decode", "stringify", "parse"],
                             "time" => &["now", "unix_seconds", "unix_millis", "sleep_ms"],
+                            "env" => &["get", "has", "args", "current_exe"],
                             _ => &[],
                         };
                         if allowed.contains(&name.as_str()) { Ok(Value::StdFunction(module, name.clone())) }
@@ -1057,6 +1058,29 @@ impl Interpreter {
                 if !(0..=60_000).contains(&ms) { return Err(self.error("std.time.sleep_ms() duration must be between 0 and 60000", span)); }
                 std::thread::sleep(std::time::Duration::from_millis(ms as u64)); Ok(Value::Nil)
             }
+            ("env", "get") => {
+                if !(1..=2).contains(&args.len()) { return Err(self.error("std.env.get() expects a name and optional default", span)); }
+                let Value::String(key) = &args[0] else { return Err(self.error("std.env.get() name must be a string", span)); };
+                match std::env::var(key) {
+                    Ok(value) => Ok(Value::String(value)),
+                    Err(std::env::VarError::NotPresent) => Ok(args.get(1).cloned().unwrap_or(Value::Nil)),
+                    Err(std::env::VarError::NotUnicode(_)) => Err(self.error("environment variable is not valid Unicode", span)),
+                }
+            }
+            ("env", "has") => {
+                if args.len() != 1 { return Err(self.error("std.env.has() expects one name", span)); }
+                let Value::String(key) = &args[0] else { return Err(self.error("std.env.has() name must be a string", span)); };
+                Ok(Value::Boolean(std::env::var_os(key).is_some()))
+            }
+            ("env", "args") => {
+                if !args.is_empty() { return Err(self.error("std.env.args() expects no arguments", span)); }
+                Ok(Value::List(Rc::new(RefCell::new(std::env::args().skip(1).map(Value::String).collect()))))
+            }
+            ("env", "current_exe") => {
+                if !args.is_empty() { return Err(self.error("std.env.current_exe() expects no arguments", span)); }
+                std::env::current_exe().map(|path| Value::String(path.to_string_lossy().into_owned()))
+                    .map_err(|error| self.error(&format!("cannot determine current executable: {error}"), span))
+            }
             _ => Err(self.error(&format!("unknown standard function std.{module}.{name}"), span)),
         }
     }
@@ -1167,6 +1191,21 @@ mod tests {
     #[test]
     fn runtime_error_has_stable_machine_readable_code() {
         assert_eq!(run("1 / 0\n").unwrap_err().code, "MATH_DIVISION_BY_ZERO");
+    }
+
+    #[test]
+    fn std_env_reads_environment_and_process_metadata() {
+        let key = format!("MOSH_TEST_{}_VALUE", std::process::id());
+        std::env::set_var(&key, "runtime-value");
+        let source = format!("std.env.get(\"{key}\")\\n");
+        assert_eq!(run(&source).unwrap(), Value::String("runtime-value".into()));
+        let missing = format!("std.env.get(\"{key}_MISSING\", \"fallback\")\\n");
+        assert_eq!(run(&missing).unwrap(), Value::String("fallback".into()));
+        let has = format!("std.env.has(\"{key}\")\\n");
+        assert_eq!(run(&has).unwrap(), Value::Boolean(true));
+        assert!(matches!(run("std.env.args()\\n").unwrap(), Value::List(_)));
+        assert!(matches!(run("std.env.current_exe()\\n").unwrap(), Value::String(path) if !path.is_empty()));
+        std::env::remove_var(key);
     }
 
     #[test]
