@@ -31,7 +31,7 @@ impl ModuleRegistry {
                     namespace: "std",
                     implemented: true,
                     description: "Core language and standard-library facilities",
-                    modules: &["strings", "collections", "math", "files", "paths", "json", "time"],
+                    modules: &["strings", "collections", "math", "files", "paths", "json", "time", "env"],
                 },
                 ModuleDescriptor {
                     namespace: "device",
